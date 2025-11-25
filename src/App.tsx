@@ -1,4 +1,5 @@
-import { useState } from 'react';
+// /mnt/data/App.tsx
+import { useEffect, useState } from 'react';
 import { Search, Bell, Settings, Download, Plus, Wallet, TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
@@ -11,26 +12,190 @@ import { TransactionTable } from './components/TransactionTable';
 
 interface Transaction {
   id: string;
-  type: 'income' | 'allocation';
+  type: 'income' | 'expense' | 'investment';
   date: string;
   label: string;
+  category?: string;
+  stream?: string;
   amount: number;
+  note?: string;
+}
+
+function fmtIDR(v: number) {
+  return new Intl.NumberFormat('id-ID').format(Math.round(v));
+}
+
+function pctChange(current: number, previous: number): { text: string; type: 'positive' | 'negative' | 'neutral' } {
+  if (previous === 0) {
+    if (current === 0) return { text: '—', type: 'neutral' };
+    return { text: '—', type: 'neutral' };
+  }
+  const raw = ((current - previous) / Math.abs(previous)) * 100;
+  const sign = raw >= 0 ? 'positive' : 'negative';
+  return { text: (raw >= 0 ? '+' : '') + raw.toFixed(1) + '%', type: sign as any };
 }
 
 export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
-  const handleAddTransaction = (transaction: Omit<Transaction, 'id'>) => {
-    const newTransaction: Transaction = {
-      ...transaction,
-      id: Date.now().toString(),
-    };
-    setTransactions(prev => [newTransaction, ...prev]);
+  // metric state
+  const [monthlyLabels, setMonthlyLabels] = useState<string[]>([]);
+  const [incomeArr, setIncomeArr] = useState<number[]>(Array(12).fill(0));
+  const [expenseArr, setExpenseArr] = useState<number[]>(Array(12).fill(0));
+  const [investArr, setInvestArr] = useState<number[]>(Array(12).fill(0));
+
+  // derived metrics for cards
+  const [totalBalance, setTotalBalance] = useState<number>(0);
+  const [totalRevenue, setTotalRevenue] = useState<number>(0);
+  const [totalExpenses, setTotalExpenses] = useState<number>(0);
+  const [netProfitTotal, setNetProfitTotal] = useState<number>(0);
+  const [changes, setChanges] = useState({
+    balance: { text: '—', type: 'neutral' as any },
+    revenue: { text: '—', type: 'neutral' as any },
+    expenses: { text: '—', type: 'neutral' as any },
+    net: { text: '—', type: 'neutral' as any },
+  });
+
+  // --- helper to load monthly and derived metrics ---
+  const refreshMonthlyAndMetrics = async () => {
+    try {
+      const year = new Date().getFullYear();
+      const res = await fetch(`/api/monthly?year=${year}`);
+      if (!res.ok) return;
+      const j = await res.json(); // { labels, income, expense, investment }
+      const labels = j.labels || [];
+      const income = (j.income || []).map((x: any) => Number(x || 0));
+      const expense = (j.expense || []).map((x: any) => Number(x || 0));
+      const invest = (j.investment || []).map((x: any) => Number(x || 0));
+
+      setMonthlyLabels(labels);
+      setIncomeArr(income);
+      setExpenseArr(expense);
+      setInvestArr(invest);
+
+      const now = new Date();
+      const idx = now.getMonth();
+      const prevIdx = idx - 1;
+
+      const sumIncome = income.reduce((s:number, v:number) => s + v, 0);
+      const sumExpense = expense.reduce((s:number, v:number) => s + v, 0);
+
+      const nettArr = income.map((inc:number, i:number) => inc - (expense[i] || 0) - (invest[i] || 0));
+      const cumulativeUpToIdx = nettArr.slice(0, idx + 1).reduce((s:number,v:number)=>s+v, 0);
+      const cumulativeUpToPrev = prevIdx >= 0 ? nettArr.slice(0, prevIdx + 1).reduce((s:number,v:number)=>s+v, 0) : 0;
+
+      setTotalRevenue(sumIncome);
+      setTotalExpenses(sumExpense);
+      setNetProfitTotal(nettArr.reduce((s:number,v:number)=>s+v, 0));
+      setTotalBalance(cumulativeUpToIdx);
+
+      setChanges({
+        balance: pctChange(cumulativeUpToIdx, cumulativeUpToPrev),
+        revenue: pctChange(income[idx] || 0, prevIdx >= 0 ? income[prevIdx] || 0 : 0),
+        expenses: pctChange(expense[idx] || 0, prevIdx >= 0 ? expense[prevIdx] || 0 : 0),
+        net: pctChange(nettArr[idx] || 0, prevIdx >= 0 ? nettArr[prevIdx] || 0 : 0),
+      });
+    } catch (e) {
+      console.warn('refreshMonthlyAndMetrics failed', e);
+    }
   };
 
-  const handleDeleteTransaction = (id: string) => {
-    setTransactions(prev => prev.filter(t => t.id !== id));
+  // --- fetch persisted transactions on mount ---
+  useEffect(() => {
+    async function loadTx() {
+      try {
+        const res = await fetch('/api/transactions');
+        if (!res.ok) throw new Error('failed to fetch transactions');
+        const json = await res.json();
+        const mapped = (json || []).map((t: any) => ({
+          id: String(t.id),
+          type: (t.type || '').toLowerCase(),
+          date: t.date || '',
+          label: t.label || t.category || t.title || '',
+          category: t.category || '',
+          stream: t.stream ?? '',   
+          amount: Number(t.amount || t.amount_idr || 0),
+          note: t.note || ''
+        })) as Transaction[];
+        setTransactions(mapped);
+      } catch (e) {
+        console.warn('load transactions failed', e);
+      }
+    }
+    loadTx();
+    // initial metric load
+    refreshMonthlyAndMetrics();
+  }, []);
+
+  // when dialog saves, this handler will be called with transaction object returned by backend or optimistic one
+  // keep original signature but normalize internally to avoid invalid shapes causing render errors
+  const handleAddTransaction = async (transaction: Omit<Transaction, 'id'>) => {
+    // normalize incoming transaction shape for optimistic update
+    const normalized: Transaction = {
+      id: (transaction as any)?.id ? String((transaction as any).id) : Date.now().toString(),
+      type: ((transaction as any)?.type || (transaction as any)?.category || 'income').toLowerCase() as any,
+      date: (transaction as any)?.date || new Date().toISOString(),
+      label: (transaction as any)?.label ?? (transaction as any)?.category ?? '',
+      category: (transaction as any)?.category ?? '',
+      stream: (transaction as any)?.stream ?? '',     // <-- FIX DI SINI
+      amount: Number((transaction as any)?.amount ?? 0),
+      note: (transaction as any)?.note ?? '',
+    };
+
+
+    // optimistic add (normalized)
+    setTransactions(prev => [normalized, ...prev]);
+
+    // re-fetch canonical transactions + metrics and defensively apply
+    try {
+      const res = await fetch('/api/transactions');
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json)) {
+          const mapped = (json || []).map((t: any) => ({
+            id: String(t.id),
+            type: (t.type || '').toLowerCase(),
+            date: t.date || '',
+            label: t.label || t.category || t.title || '',
+            category: t.category || '',
+            stream: t.stream ?? '',       
+            amount: Number(t.amount || t.amount_idr || 0),
+            note: t.note || ''
+          })) as Transaction[];
+          setTransactions(mapped);
+        } else {
+          console.warn('[App] /api/transactions returned non-array:', json);
+        }
+      } else {
+        console.warn('[App] /api/transactions returned non-ok', res.status);
+      }
+    } catch (e) {
+      console.warn('refresh transactions after add failed', e);
+    }
+
+    // refresh metrics too
+    refreshMonthlyAndMetrics();
+  };
+
+  const handleDeleteTransaction = async (id: string) => {
+    try {
+      const res = await fetch('/api/delete_transaction', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ id })
+      });
+      if (!res.ok) throw new Error('delete failed');
+      // update UI
+      setTransactions(prev => prev.filter(t => t.id !== id));
+      // refresh metrics
+      refreshMonthlyAndMetrics();
+    } catch (e) {
+      console.error('delete transaction failed', e);
+      // fallback: remove from UI anyway
+      setTransactions(prev => prev.filter(t => t.id !== id));
+      refreshMonthlyAndMetrics();
+    }
   };
 
   return (
@@ -90,36 +255,36 @@ export default function App() {
             icon={<Wallet className="w-5 h-5" />}
             iconBgColor="bg-cyan-500"
             title="Total Balance"
-            value="$92,450"
-            change="+12.5%"
-            changeType="positive"
+            value={`Rp ${fmtIDR(totalBalance)}`}
+            change={changes.balance.text}
+            changeType={changes.balance.type}
             comparison="vs last month"
           />
           <MetricCard
             icon={<TrendingUp className="w-5 h-5" />}
             iconBgColor="bg-green-500"
             title="Total Revenue"
-            value="$58,640"
-            change="+8.2%"
-            changeType="positive"
+            value={`Rp ${fmtIDR(totalRevenue)}`}
+            change={changes.revenue.text}
+            changeType={changes.revenue.type}
             comparison="vs last month"
           />
           <MetricCard
             icon={<TrendingDown className="w-5 h-5" />}
             iconBgColor="bg-orange-500"
             title="Total Expenses"
-            value="$24,120"
-            change="-3.1%"
-            changeType="negative"
+            value={`Rp ${fmtIDR(totalExpenses)}`}
+            change={changes.expenses.text}
+            changeType={changes.expenses.type}
             comparison="vs last month"
           />
           <MetricCard
             icon={<DollarSign className="w-5 h-5" />}
             iconBgColor="bg-purple-500"
             title="Net Profit"
-            value="$34,520"
-            change="+15.8%"
-            changeType="positive"
+            value={`Rp ${fmtIDR(netProfitTotal)}`}
+            change={changes.net.text}
+            changeType={changes.net.type}
             comparison="vs last month"
           />
         </div>
@@ -135,18 +300,15 @@ export default function App() {
 
           <TabsContent value="overview" className="mt-6">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-              {/* Portfolio Performance */}
               <div className="lg:col-span-2">
                 <PortfolioChart />
               </div>
 
-              {/* Asset Allocation */}
               <div className="lg:col-span-1">
                 <AssetAllocation />
               </div>
             </div>
 
-            {/* Transaction Table */}
             <TransactionTable 
               transactions={transactions}
               onDelete={handleDeleteTransaction}
@@ -177,7 +339,10 @@ export default function App() {
       <TransactionDialog 
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        onSubmit={handleAddTransaction}
+        onSaved={(tx:any) => {
+          // server returns saved tx — re-fetch canonical state
+          handleAddTransaction(tx);
+        }}
       />
     </div>
   );
