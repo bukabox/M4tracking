@@ -1,9 +1,9 @@
 // src/components/TransactionTable.tsx
-import { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { Card } from './ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { Badge } from './ui/badge';
-import { Button } from './ui/button';
+import IconButton from "./ui/icon-button";
 import { 
   TrendingUp, 
   Home, 
@@ -21,7 +21,7 @@ import {
   Trash2
 } from 'lucide-react';
 
-interface Transaction {
+export interface Transaction {
   id: string;
   type: 'income' | 'allocation' | 'expense' | 'investment';
   date: string;
@@ -31,13 +31,20 @@ interface Transaction {
   category?: string;
 }
 
-interface TransactionTableProps {
+export interface TransactionTableProps {
   transactions: Transaction[];
   onDelete: (id: string) => void;
-  pageSize?: number; // optional prop to control pagination size
+  pageSize?: number;
 }
 
-export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: TransactionTableProps) {
+export interface TransactionTableRef {
+  scrollToTransaction: (id: string) => void;
+}
+
+export const TransactionTable = forwardRef<TransactionTableRef, TransactionTableProps>(function TransactionTable(
+  { transactions = [], onDelete, pageSize = 5 }: TransactionTableProps,
+  ref
+) {
   // pagination state
   const [page, setPage] = useState<number>(1);
 
@@ -48,20 +55,19 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
       const tb = new Date(b.date || 0).getTime();
       if (tb !== ta) return tb - ta; // primary: date desc
 
-      // fallback: compare numeric id if possible (assume timestamp-ish id)
       const ai = Number(String(a.id).replace(/\D/g, '')) || 0;
       const bi = Number(String(b.id).replace(/\D/g, '')) || 0;
       return bi - ai; // newest id first
     });
   }, [transactions]);
 
-  // when transactions change, reset to first page so newest items are visible
+  // reset to page 1 when transactions change
   useEffect(() => {
     setPage(1);
-  }, [transactions.length, /* also trigger if content changed */ JSON.stringify(transactions.slice(0, 10))]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transactions.length, JSON.stringify(transactions.slice(0, 10))]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  // clamp page if transactions changed and page is out of range
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -131,7 +137,6 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
     const lowerLabel = (label || '').toLowerCase();
     const t = (type || '').toLowerCase();
 
-    // PRIORITAS BERDASARKAN TYPE
     if (t === 'income') return 'Income';
     if (t === 'expense') return 'Expense';
     if (t === 'investment') return 'Investment';
@@ -156,6 +161,24 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
   const goToNext = () => setPage(p => Math.min(totalPages, p + 1));
   const goTo = (n: number) => setPage(Math.min(Math.max(1, n), totalPages));
 
+  // expose scrollToTransaction via ref
+  useImperativeHandle(ref, () => ({
+    scrollToTransaction: (id: string) => {
+      try {
+        const el = document.getElementById(`txn-${id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // open accordion item: if using Radix Accordion, it could require controlling state to open
+          // but at minimum scrolling to element helps UX. If you want to auto-open, you'd need controlled Accordion.
+        } else {
+          console.warn('Transaction element not found for scroll:', id);
+        }
+      } catch (e) {
+        console.warn('scrollToTransaction failed', e);
+      }
+    }
+  }), []);
+
   return (
     <Card className="p-6 bg-white border-gray-200">
       <div className="mb-6">
@@ -171,9 +194,6 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
         <>
           <Accordion type="single" collapsible className="space-y-3">
             {visible.map((transaction) => {
-              // DEBUG: inspect the transaction object received by TransactionTable
-              console.debug('[TransactionTable] transaction received:', transaction);
-
               const category = getCategoryName(transaction.label, transaction.type);
               const icon = getCategoryIcon(transaction.label, transaction.type);
 
@@ -181,6 +201,7 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
                 <AccordionItem 
                   key={transaction.id} 
                   value={transaction.id}
+                  id={`txn-${transaction.id}`} // ADD id so scroll can find it
                   className="border border-gray-200 rounded-xl px-5 py-4 hover:border-gray-300 transition-colors"
                 >
                   <AccordionTrigger className="hover:no-underline py-0">
@@ -198,7 +219,6 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
                         <div className="text-left">
                           <p className="text-gray-900">{transaction.label}</p>
 
-                          {/* badgeText: income -> stream (jika ada) else label (nama product); non-income -> category */}
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-sm text-gray-500">
                               {(() => {
@@ -221,23 +241,30 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
 
                       </div>
                       <div className="flex items-center gap-3">
-                        <div className={`${
-                          transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
-                        }`}>
+                        <div className={`${transaction.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
                           {transaction.type === 'income' ? '+' : '-'}{formatCurrency(transaction.amount)}
                         </div>
-                        {/* Avoid nested button inside trigger (Radix) if needed — if Button renders <button>, consider replacing with non-button */}
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={(e) => {
+
+                        {/* Replace nested button with a non-button clickable element to avoid nested <button> */}
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e: React.MouseEvent) => {
                             e.stopPropagation();
-                            onDelete(transaction.id);
+                            onDelete && onDelete(transaction.id);
                           }}
-                          className="hover:bg-red-50"
+                          onKeyDown={(e: React.KeyboardEvent) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              onDelete && onDelete(transaction.id);
+                            }
+                          }}
+                          className="hover:bg-red-50 p-1 rounded-md cursor-pointer"
+                          aria-label="Delete transaction"
+                          title="Delete"
                         >
                           <Trash2 className="w-4 h-4 text-red-500" />
-                        </Button>
+                        </div>
                       </div>
                     </div>
                   </AccordionTrigger>
@@ -250,7 +277,6 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
-                        {/* Left Column */}
                         <div className="space-y-3">
                           <div>
                             <div className="flex items-center gap-2 mb-1">
@@ -277,7 +303,6 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
                           </div>
                         </div>
 
-                        {/* Right Column */}
                         <div className="space-y-3">
                           <div>
                             <div className="flex items-center gap-2 mb-1">
@@ -309,7 +334,6 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
                         </div>
                       </div>
 
-                      {/* Amount Section */}
                       <div className="mt-4 pt-4 border-t border-blue-200 space-y-2">
                         <div className="flex justify-between items-center">
                           <span className="text-gray-600">Subtotal</span>
@@ -317,15 +341,12 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
                         </div>
                         <div className="flex justify-between items-center">
                           <span className="text-gray-900">Total Amount</span>
-                          <span className={`${
-                            transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
-                          }`}>
+                          <span className={`${transaction.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
                             {transaction.type === 'income' ? '+' : ''}{formatCurrency(transaction.amount)}
                           </span>
                         </div>
                       </div>
 
-                      {/* Description */}
                       <div className="mt-4 pt-4 border-t border-blue-200">
                         <p className="text-gray-500 text-sm mb-1">Description</p>
                         <p className="text-gray-900">
@@ -341,7 +362,6 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
             })}
           </Accordion>
 
-          {/* Pagination controls */}
           {totalPages > 1 && (
             <div className="mt-4 flex items-center justify-between">
               <div className="text-sm text-gray-600">
@@ -357,7 +377,6 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
                   Prev
                 </button>
 
-                {/* page numbers */}
                 <div className="hidden sm:flex items-center gap-1">
                   {Array.from({ length: totalPages }).map((_, i) => {
                     const n = i + 1;
@@ -387,6 +406,6 @@ export function TransactionTable({ transactions = [], onDelete, pageSize = 5 }: 
       )}
     </Card>
   );
-}
+});
 
 export default TransactionTable;

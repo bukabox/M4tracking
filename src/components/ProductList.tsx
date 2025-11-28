@@ -1,0 +1,467 @@
+// src/components/ProductList.tsx
+import { forwardRef, useMemo, useState, useEffect, useRef } from 'react';
+import { Card } from './ui/card';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
+import { Input } from './ui/input';
+import {
+  TrendingUp,
+  Hash,
+  ArrowUp,
+  ArrowDown,
+  FileText,
+  Search
+} from 'lucide-react';
+
+interface ProductData {
+  id: string;
+  name: string;
+  total_revenue: number;
+}
+
+type Tx = {
+  id: string | number;
+  type?: string;
+  date?: string;
+  label?: string;
+  amount?: number;
+  stream?: string;
+  note?: string;
+  category?: string;
+  stickerId?: string | number;
+  packId?: string | number;
+};
+
+interface ProductListProps {
+  products: ProductData[];
+  transactions: Tx[];
+  pageSize?: number;
+}
+
+function fmtIDR(v: number) {
+  return new Intl.NumberFormat('id-ID').format(Math.round(v || 0));
+}
+
+function makeStaticUrl(id: string) {
+  return `https://stickershop.line-scdn.net/stickershop/v1/product/${encodeURIComponent(id)}/LINEStorePC/main.png?v=1`;
+}
+function makeAnimationUrl(id: string) {
+  return `https://stickershop.line-scdn.net/stickershop/v1/product/${encodeURIComponent(id)}/iPhone/main_animation@2x.png?v=1`;
+}
+function makeStickerWebpUrl(id: string) {
+  return `https://stickershop.line-scdn.net/stickershop/v1/sticker/${encodeURIComponent(id)}/ANDROID/sticker.webp`;
+}
+
+function extractStickerId(tx: Tx): string | null {
+  if (!tx) return null;
+
+  if (tx.note && typeof tx.note === 'string') {
+    const m = tx.note.match(/sticker[:=]\s*([0-9]+)/i);
+    if (m) return m[1];
+  }
+
+  if ((tx as any).packId) return String((tx as any).packId);
+
+  if (tx.stickerId) {
+    const s = String(tx.stickerId);
+    if (String(tx.id) !== s && s.length >= 4 && s.length <= 12) return s;
+  }
+
+  if (tx.label && typeof tx.label === 'string') {
+    const m2 = tx.label.match(/\b([0-9]{4,})\b/);
+    if (m2) return m2[1];
+  }
+
+  return null;
+}
+
+export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ products = [], transactions = [], pageSize = 5 }, ref) => {
+
+  const [page, setPage] = useState<number>(1);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [sortKey, setSortKey] = useState<'name' | 'total_revenue'>('total_revenue');
+  const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
+
+  // <-- NEW: local transactions state so component can update itself when new tx events arrive
+  const [localTx, setLocalTx] = useState<Tx[]>(transactions || []);
+  // Keep localTx in sync if parent updates the transactions prop (initial load / bulk refresh)
+  useEffect(() => {
+    setLocalTx(transactions || []);
+  }, [transactions]);
+
+  // Listen for global event dispatched by TransactionDialog (transaction:added)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      try {
+        // CustomEvent detail contains transaction payload
+        const ce = e as CustomEvent;
+        const newTx = ce.detail as Tx | undefined;
+        if (!newTx) return;
+        // prepend so newest shows first
+        setLocalTx(prev => {
+          // avoid duplicates if same id exists
+          if (prev.some(t => String(t.id) === String(newTx.id))) return prev;
+          return [newTx, ...prev];
+        });
+        // ensure we show first page / make it visible to user
+        setPage(1);
+      } catch (_) { /* swallow */ }
+    };
+    window.addEventListener('transaction:added', handler as EventListener);
+    return () => window.removeEventListener('transaction:added', handler as EventListener);
+  }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [products.length, searchTerm]);
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return '-';
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: "numeric", month: "2-digit", day: "2-digit"
+    }).replace(/\//g, '-');
+  };
+
+  const formatDateTime = (dateString?: string) => {
+    if (!dateString) return '-';
+    return new Date(dateString).toLocaleString('id-ID', {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false
+    });
+  };
+
+  const formatCurrency = (amount?: number) =>
+    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
+      .format(amount || 0);
+
+  const getCategoryIcon = (label?: string, type?: string) => {
+    const t = (type || "").toLowerCase();
+    if (t === "income") return <TrendingUp className="w-5 h-5" />;
+    return <Hash className="w-5 h-5" />;
+  };
+
+  const getCategoryName = (label?: string, type?: string) => {
+    const t = (type || '').toLowerCase();
+    if (t === "income") return "Income";
+    return label || "General";
+  };
+
+  const normalize = (s?: string) => (s || '').toLowerCase().trim();
+
+  // Use localTx instead of transactions so component updates by itself
+  const entriesByProduct = useMemo(() => {
+    const map = new Map<string, Tx[]>();
+    for (const tx of localTx) {
+      const key = normalize(tx.label || tx.category || "Unknown Product");
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(tx);
+    }
+    for (const [k, arr] of map.entries()) {
+      arr.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+    }
+    return map;
+  }, [localTx]);
+
+  // Recompute revenue per product from local transactions (only income type)
+  const revenueByProduct = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const tx of localTx) {
+      if (!tx) continue;
+      const key = normalize(tx.label || tx.category || "Unknown Product");
+      const amt = Number(tx.amount || 0);
+      // only sum income transactions (mimic total_revenue semantics)
+      if ((tx.type || '').toLowerCase() === 'income') {
+        map.set(key, (map.get(key) || 0) + amt);
+      }
+    }
+    return map;
+  }, [localTx]);
+
+  const normalizedProducts = useMemo(
+    () => products.map(p => ({ ...p, _norm: normalize(p.name) })),
+    [products]
+  );
+
+  const sorted = useMemo(() => {
+    const sterm = normalize(searchTerm);
+    let list = normalizedProducts.filter(p => p._norm.includes(sterm));
+    list.sort((a, b) => {
+      const aVal = a[sortKey];
+      const bVal = b[sortKey];
+      if (typeof aVal === 'string') {
+        return sortDirection === 'asc' ? (aVal as string).localeCompare(bVal as string) : (bVal as string).localeCompare(aVal as string);
+      } else {
+        return sortDirection === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+      }
+    });
+    return list;
+  }, [normalizedProducts, searchTerm, sortKey, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages]);
+  const visible = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return sorted.slice(start, start + pageSize);
+  }, [sorted, page, pageSize]);
+
+  const getSortIcon = (key: 'name' | 'total_revenue') =>
+    sortKey === key ? (sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />) : null;
+
+  return (
+    <Card className="p-6 bg-white border-gray-200" ref={ref}>
+      <div className="flex gap-4 justify-between">
+        <div className="mb-2">
+          <h3 className="text-gray-900 mb-1">Sticker</h3>
+        </div>
+
+        <div className="mb-4 flex items-center gap-4">
+          <div className="relative w-full max-w-sm">
+            <Input
+              placeholder="Search..."
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
+              className="pl-9"
+            />
+            <div className="absolute left-auto right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+              <Search className="h-4 w-4 text-gray-400" />
+            </div>
+          </div>
+        </div>
+
+        <div className="hidden sm:grid grid-cols-2 text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-2 rounded-t">
+          <div
+            onClick={() => {
+              setSortKey('total_revenue');
+              setSortDirection(sortKey === 'total_revenue'
+                ? (sortDirection === 'desc' ? 'asc' : 'desc')
+                : 'desc');
+            }}
+            className="flex items-center justify-end cursor-pointer"
+          >
+            Sort {getSortIcon('total_revenue')}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-2">
+        {visible.length === 0 ? (
+          <div className="text-center py-12 text-gray-500">
+            {searchTerm ? `No products found for "${searchTerm}".` : 'No products available.'}
+          </div>
+        ) : (
+          <Accordion type="single" collapsible className="space-y-3">
+
+            {visible.map((p) => {
+              const entries = entriesByProduct.get(p._norm) || [];
+              // prefer computed revenue (from live transactions), fallback to product.total_revenue
+              const liveRevenue = revenueByProduct.get(p._norm);
+              const displayRevenue = typeof liveRevenue === 'number' ? liveRevenue : p.total_revenue;
+
+              return (
+                <AccordionItem
+                  key={p.id}
+                  value={p.id}
+                  className="border border-gray-200 rounded-xl px-3 py-2 hover:border-gray-300 transition-colors"
+                >
+                  <AccordionTrigger className="hover:no-underline py-0">
+                    <div className="flex items-center justify-between w-full">
+
+                      <div className="flex items-center gap-1">
+                        <div className="w-12 h-12 rounded-full flex items-center justify-center bg-blue-50 text-blue-600">
+                          {(() => {
+                            let finalThumbUrl: string | null = null;
+                            let sid: string | null = null;
+                            for (const tx of entries) {
+                              const s = extractStickerId(tx);
+                              if (s) {
+                                sid = s;
+                                finalThumbUrl = makeStaticUrl(s);
+                                break;
+                              }
+                            }
+
+                            return finalThumbUrl ? (
+                              <img
+                                src={finalThumbUrl}
+                                alt="sticker"
+                                className="w-8 h-8 object-contain"
+                                onError={(e) => {
+                                  try {
+                                    const img = e.currentTarget as HTMLImageElement;
+                                    if (!img.dataset.triedAnim && sid) {
+                                      img.dataset.triedAnim = "1";
+                                      img.src = makeAnimationUrl(sid);
+                                      return;
+                                    }
+                                    if (!img.dataset.triedSticker && sid) {
+                                      img.dataset.triedSticker = "1";
+                                      img.src = makeStickerWebpUrl(sid);
+                                      return;
+                                    }
+                                    img.onerror = null;
+                                    img.style.visibility = 'hidden';
+                                  } catch (_) { /* swallow */ }
+                                }}
+                              />
+                            ) : (
+                              <Hash className="w-5 h-5" />
+                            );
+                          })()}
+                        </div>
+
+                        <div className="text-left">
+                          <p className="text-gray-900">{p.name}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-gray-500">{entries.length} entries</span>
+                            <span className="text-gray-300">•</span>
+                            <span className="text-xs text-gray-500">Rp {fmtIDR(displayRevenue)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-green-600 font-semibold">
+                        Rp {fmtIDR(displayRevenue)}
+                      </div>
+
+                    </div>
+                  </AccordionTrigger>
+
+                  <AccordionContent className="pt-4">
+                    <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+                      <div className="flex items-center gap-2 mb-4">
+                        <FileText className="w-4 h-4 text-blue-600" />
+                        <span className="text-gray-900">Product Transactions</span>
+                      </div>
+
+                      {entries.length === 0 ? (
+                        <div className="text-sm text-gray-500">No transactions for this product.</div>
+                      ) : (
+                        <div className="space-y-3">
+                          {entries.map((tx) => {
+                            const sid = extractStickerId(tx);
+                            const thumbUrl = sid ? makeStaticUrl(sid) : null;
+
+                            return (
+                              <div key={tx.id} className="p-3">
+                                <div className="flex items-start justify-between">
+                                  <div className="flex items-start gap-3">
+
+                                    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gray-50 text-gray-600">
+                                      {thumbUrl ? (
+                                        <img
+                                          src={thumbUrl}
+                                          alt="sticker"
+                                          className="w-8 h-8 object-contain"
+                                          onError={(e) => {
+                                            try {
+                                              const img = e.currentTarget as HTMLImageElement;
+                                              if (!img.dataset.triedAnim && sid) {
+                                                img.dataset.triedAnim = "1";
+                                                img.src = makeAnimationUrl(sid);
+                                                return;
+                                              }
+                                              if (!img.dataset.triedSticker && sid) {
+                                                img.dataset.triedSticker = "1";
+                                                img.src = makeStickerWebpUrl(sid);
+                                                return;
+                                              }
+                                              img.onerror = null;
+                                              img.style.visibility = 'hidden';
+                                            } catch (_) {}
+                                          }}
+                                        />
+                                      ) : (
+                                        getCategoryIcon(tx.label, tx.type)
+                                      )}
+                                    </div>
+
+                                    <div>
+                                      <p className="text-gray-900 font-medium text-left">
+                                        {tx.label || p.name}
+                                      </p>
+                                      <div className="text-sm text-gray-500">
+                                        <span>{getCategoryName(tx.label, tx.type)}</span>
+                                        <span className="mx-2">•</span>
+                                        <span>{formatDate(tx.date)}</span>
+                                      </div>
+                                    </div>
+
+                                  </div>
+
+                                  <div className="text-right">
+                                    <div className={`${(tx.type || '').toLowerCase() === 'income'
+                                      ? 'text-green-600' : 'text-red-600'} font-semibold`}>
+                                      {(tx.type || '').toLowerCase() === 'income' ? '+' : '-'}
+                                      {formatCurrency(tx.amount)}
+                                    </div>
+                                    <div className="text-xs text-gray-400 mt-1">{formatDateTime(tx.date)}</div>
+                                  </div>
+
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </AccordionContent>
+
+                </AccordionItem>
+              );
+            })}
+
+          </Accordion>
+        )}
+      </div>
+
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between">
+          <div className="text-sm text-gray-600">
+            Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> -
+            <span className="font-medium">{Math.min(page * pageSize, sorted.length)}</span> of
+            <span className="font-medium">{sorted.length}</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              className="px-3 py-1 rounded-md border border-gray-200 bg-white text-gray-700 disabled:opacity-50"
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
+              Prev
+            </button>
+
+            <div className="hidden sm:flex items-center gap-1">
+              {Array.from({ length: totalPages }).map((_, i) => {
+                const n = i + 1;
+                return (
+                  <button
+                    key={n}
+                    onClick={() => setPage(n)}
+                    className={`px-2 py-1 rounded ${n === page
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-white border border-gray-200 text-gray-700'
+                    }`}
+                  >
+                    {n}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              className="px-3 py-1 rounded-md border border-gray-200 bg-white text-gray-700 disabled:opacity-50"
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
+              Next
+            </button>
+          </div>
+
+        </div>
+      )}
+
+    </Card>
+  );
+});
+
+export default ProductList;
