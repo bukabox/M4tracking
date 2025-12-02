@@ -29,26 +29,10 @@ import {
   Hash,
   Clock,
   CheckCircle,
-  Tag
+  Tag,
+  TrendingDown,
+  BarChart3
 } from "lucide-react";
-
-type InvestmentTx = {
-  id: string | number;
-  type?: string;
-  date?: string;
-  label?: string;
-  amount?: number;
-  stream?: string;
-  category?: string;
-  note?: string;
-};
-
-type InvestmentListProps = {
-  transactions?: InvestmentTx[] | null;
-  fetchUrl?: string;
-  onDelete?: (id: string | number) => Promise<void> | void;
-  pageSize?: number;
-};
 
 /* formatting helpers */
 const formatDate = (dateString?: string) => {
@@ -65,55 +49,68 @@ const formatCurrency = (amount?: number) => {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(amount || 0);
 };
 
-/* unified category resolver: returns icon (no color), name, wrapperClass (bg + text) */
-function getCategoryInfo(label?: string) {
+/* unified category resolver: returns icon (no color), name, wrapperClass (bg + text) 
+   NOTE: exported so TransactionTable can import and follow same mapping */
+export function getCategoryInfo(label?: string) {
   const s = (label || "").toLowerCase();
 
-  const info = (key: string, name: string, icon: JSX.Element, wrapperClass: string) => ({ key, name, icon, wrapperClass });
+  const info = (key: string, name: string, icon: JSX.Element, bgColor: string) => ({ 
+    key, 
+    name, 
+    icon, 
+    bgColor 
+  });
+
+  // BTC special (we return icon as <img> but bgColor will be empty so caller can render icon without background)
+  if (/\b(btc|bitcoin)\b/.test(s)) {
+    // BTC: no colored background, larger icon
+    const btcImg = <img src="https://www.svgrepo.com/show/303287/bitcoin-logo.svg" alt="BTC" className="w-10 h-10" />;
+    return info("btc", "Bitcoin", btcImg, ""); // empty bg so caller can render raw img (no bg)
+  }
 
   // COMPUTER / WORKSTATION
-  if (/\b(pc|desktop|workstation|mac mini|macmini)\b/.test(s)) return info("cpu", "Desktop / PC", <Cpu className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-indigo-600 text-white");
-  if (/\b(macbook|laptop|notebook)\b/.test(s)) return info("laptop", "Laptop", <Laptop className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-purple-600 text-white");
-  if (/\b(monitor|display|screen)\b/.test(s)) return info("monitor", "Monitor / Display", <Monitor className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-sky-600 text-white");
+  if (/\b(pc|desktop|workstation|mac mini|macmini)\b/.test(s)) return info("cpu", "Desktop / PC", <Cpu className="w-5 h-5" />, "bg-indigo-600");
+  if (/\b(macbook|laptop|notebook)\b/.test(s)) return info("laptop", "Laptop", <Laptop className="w-5 h-5" />, "bg-purple-600");
+  if (/\b(monitor|display|screen)\b/.test(s)) return info("monitor", "Monitor / Display", <Monitor className="w-5 h-5" />, "bg-sky-600");
 
   // TABLET / IPAD
-  if (/\b(ipad|tablet)\b/.test(s)) return info("tablet", "Tablet / iPad", <Tablet className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-sky-500 text-white");
-  if (/\b(iphone|smartphone|handphone|hp)\b/.test(s)) return info("phone", "Smartphone", <Smartphone className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-teal-600 text-white");
-  if (/\b(watch|apple watch|smartwatch)\b/.test(s)) return info("watch", "Watch / Smartwatch", <Watch className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-pink-600 text-white");
+  if (/\b(ipad|tablet)\b/.test(s)) return info("tablet", "Tablet / iPad", <Tablet className="w-5 h-5" />, "bg-sky-500");
+  if (/\b(iphone|smartphone|handphone|hp)\b/.test(s)) return info("phone", "Smartphone", <Smartphone className="w-5 h-5" />, "bg-teal-600");
+  if (/\b(watch|apple watch|smartwatch)\b/.test(s)) return info("watch", "Watch / Smartwatch", <Watch className="w-5 h-5" />, "bg-pink-600");
 
   // AUDIO / HEADPHONES
-  if (/\b(airpods|earbuds|earphone|headphone|headset)\b/.test(s)) return info("headphones", "Headphones", <Headphones className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-violet-600 text-white");
-  if (/\b(mic|microphone)\b/.test(s)) return info("mic", "Microphone", <Mic className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-fuchsia-600 text-white");
-  if (/\b(speaker)\b/.test(s)) return info("speaker", "Speaker", <Speaker className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-indigo-500 text-white");
+  if (/\b(airpods|earbuds|earphone|headphone|headset)\b/.test(s)) return info("headphones", "Headphones", <Headphones className="w-5 h-5" />, "bg-violet-600");
+  if (/\b(mic|microphone)\b/.test(s)) return info("mic", "Microphone", <Mic className="w-5 h-5" />, "bg-fuchsia-600");
+  if (/\b(speaker)\b/.test(s)) return info("speaker", "Speaker", <Speaker className="w-5 h-5" />, "bg-indigo-500");
 
   // CAMERA
-  if (/\b(camera|dslr|mirrorless)\b/.test(s)) return info("camera", "Camera", <Camera className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-blue-600 text-white");
-  if (/\b(lens|lensa|glass)\b/.test(s)) return info("lens", "Lens", <Aperture className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-slate-700 text-white");
+  if (/\b(camera|dslr|mirrorless)\b/.test(s)) return info("camera", "Camera", <Camera className="w-5 h-5" />, "bg-blue-600");
+  if (/\b(lens|lensa|glass)\b/.test(s)) return info("lens", "Lens", <Aperture className="w-5 h-5" />, "bg-slate-700");
 
   // STORAGE
-  if (/\b(ssd|hdd|nvme|hard drive|external disk)\b/.test(s)) return info("storage", "Storage", <HardDrive className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-amber-500 text-white");
-  if (/\b(sd card|memory card|memorystick)\b/.test(s)) return info("sdcard", "Memory Card", <MemoryStick className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-rose-500 text-white");
+  if (/\b(ssd|hdd|nvme|hard drive|external disk)\b/.test(s)) return info("storage", "Storage", <HardDrive className="w-5 h-5" />, "bg-amber-500");
+  if (/\b(sd card|memory card|memorystick)\b/.test(s)) return info("sdcard", "Memory Card", <MemoryStick className="w-5 h-5" />, "bg-rose-500");
 
   // DOCK / HUB / ACCESSORIES
-  if (/\b(dock|docking|hub|usb)\b/.test(s)) return info("hub", "Dock / Hub", <Usb className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-emerald-600 text-white");
+  if (/\b(dock|docking|hub|usb)\b/.test(s)) return info("hub", "Dock / Hub", <Usb className="w-5 h-5" />, "bg-emerald-600");
 
   // FURNITURE
-  if (/\b(table|desk|meja)\b/.test(s)) return info("table", "Table / Desk", <TableIcon className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-amber-600 text-white");
-  if (/\b(chair|kursi|armchair)\b/.test(s)) return info("chair", "Chair", <ChairIcon className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-emerald-700 text-white");
+  if (/\b(table|desk|meja)\b/.test(s)) return info("table", "Table / Desk", <TableIcon className="w-5 h-5" />, "bg-amber-600");
+  if (/\b(chair|kursi|armchair)\b/.test(s)) return info("chair", "Chair", <ChairIcon className="w-5 h-5" />, "bg-emerald-700");
 
   // MISC
-  if (/\b(keyboard|kbd)\b/.test(s)) return info("keyboard", "Keyboard", <Keyboard className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-rose-600 text-white");
-  if (/\b(mouse|trackpad)\b/.test(s)) return info("mouse", "Mouse / Trackpad", <Mouse className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-amber-600 text-white");
-  if (/\b(light|lamp|lighting)\b/.test(s)) return info("light", "Lighting", <Lightbulb className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-yellow-500 text-white");
-  if (/\b(pencil|stylus|pen)\b/.test(s)) return info("pencil", "Stylus / Pen", <TrendingUp className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-slate-400 text-white");
+  if (/\b(keyboard|kbd)\b/.test(s)) return info("keyboard", "Keyboard", <Keyboard className="w-5 h-5" />, "bg-rose-600");
+  if (/\b(mouse|trackpad)\b/.test(s)) return info("mouse", "Mouse / Trackpad", <Mouse className="w-5 h-5" />, "bg-amber-600");
+  if (/\b(light|lamp|lighting)\b/.test(s)) return info("light", "Lighting", <Lightbulb className="w-5 h-5" />, "bg-yellow-500");
+  if (/\b(pencil|stylus|pen)\b/.test(s)) return info("pencil", "Stylus / Pen", <TrendingUp className="w-5 h-5" />, "bg-slate-400");
 
-  // fallback
-  return info("other", "Other", <TrendingUp className="w-5 h-5" />, "w-12 h-12 rounded-full flex items-center justify-center bg-gray-200 text-gray-700");
+  // fallback - gray background with darker icon
+  return info("other", "Other", <TrendingUp className="w-5 h-5 text-gray-700" />, "bg-gray-200");
 }
 
-/* Component */
-export function InvestmentList({ transactions: transactionsProp = null, fetchUrl = "/api/transactions", onDelete, pageSize = 5 }: InvestmentListProps) {
-  const [transactions, setTransactions] = useState<InvestmentTx[] | null>(transactionsProp);
+/* Component (unchanged logic aside from using exported getCategoryInfo) */
+export function InvestmentList({ transactions: transactionsProp = null, fetchUrl = "/api/transactions", onDelete, pageSize = 5 }: any) {
+  const [transactions, setTransactions] = useState<any[] | null>(transactionsProp);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -142,7 +139,10 @@ export function InvestmentList({ transactions: transactionsProp = null, fetchUrl
     return () => { mounted = false; };
   }, [transactionsProp, fetchUrl]);
 
-  const investmentTx = useMemo(() => (transactions || []).filter(t => String(t.type || "").toLowerCase() === "investment"), [transactions]);
+  // NOTE: Exclude BTC/Bitcoin from the investment list (moved to InvestmentCrypto)
+  const isBTC = (t: any) => /\b(btc|bitcoin)\b/.test(String((t?.label ?? t?.category ?? '')).toLowerCase());
+  const investmentTx = useMemo(() => (transactions || []).filter(t => String(t.type || "").toLowerCase() === "investment" && !isBTC(t)), [transactions]);
+
   const lifetimeTotal = useMemo(() => investmentTx.reduce((s, t) => s + Number(t.amount || 0), 0), [investmentTx]);
   const lifetimeCount = investmentTx.length;
 
@@ -169,21 +169,25 @@ export function InvestmentList({ transactions: transactionsProp = null, fetchUrl
 
   return (
     <Card className="p-6 bg-white border-gray-200">
-      <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h3 className="text-gray-900 mb-1">Investment Transactions — Lifetime</h3>
-          <p className="text-gray-500 text-sm">All recorded investment activity (lifetime)</p>
+      {/* Header with Icon - Simple style like Report.tsx */}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-2">
+          <BarChart3 className="w-5 h-5 text-gray-600" />
+          <h3 className="text-gray-900">Investment Transactions — Lifetime</h3>
         </div>
+        <div className="flex items-center justify-between">
+          <p className="text-gray-500 text-sm">All recorded investment activity (lifetime) — excluding crypto/BTC</p>
+          
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="text-sm text-gray-500">Lifetime Total</div>
+              <div className="text-lg font-semibold text-green-600">{formatCurrency(lifetimeTotal)}</div>
+            </div>
 
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <div className="text-sm text-gray-500">Lifetime Total</div>
-            <div className="text-lg font-semibold text-green-600">{formatCurrency(lifetimeTotal)}</div>
-          </div>
-
-          <div className="text-right">
-            <div className="text-sm text-gray-500">Total Entries</div>
-            <div className="text-lg font-semibold text-gray-700">{lifetimeCount}</div>
+            <div className="text-right">
+              <div className="text-sm text-gray-500">Total Entries</div>
+              <div className="text-lg font-semibold text-gray-700">{lifetimeCount}</div>
+            </div>
           </div>
         </div>
       </div>
@@ -196,15 +200,23 @@ export function InvestmentList({ transactions: transactionsProp = null, fetchUrl
         <>
           <Accordion type="single" collapsible className="space-y-3">
             {visible.map(tx => {
-              const { icon, wrapperClass, name: category } = getCategoryInfo(tx.label);
+              const { icon, bgColor, name: category } = getCategoryInfo(tx.label || tx.category);
+              const isBtc = bgColor === ""; // BTC has empty bgColor
+              
               return (
                 <AccordionItem key={tx.id} value={String(tx.id)} className="border border-gray-200 rounded-xl px-5 py-4 hover:border-gray-300 transition-colors">
                   <AccordionTrigger className="hover:no-underline py-0">
                     <div className="flex items-center justify-between w-full pr-2">
                       <div className="flex items-center gap-3">
-                        <div className={wrapperClass}>{icon}</div>
+                        {isBtc ? (
+                          <div>{icon}</div>
+                        ) : (
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${bgColor}`}>
+                            {icon}
+                          </div>
+                        )}
                         <div className="text-left">
-                          <p className="text-gray-900">{tx.label}</p>
+                          <p className="text-gray-900">{tx.label || tx.category}</p>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-sm text-gray-500">{category}</span>
                             <span className="text-gray-300">•</span>
@@ -262,7 +274,7 @@ export function InvestmentList({ transactions: transactionsProp = null, fetchUrl
                             </div>
                             <p className="text-gray-900 ml-6">{category}</p>
                           </div>
-
+                            
                           <div>
                             <div className="flex items-center gap-2 mb-1">
                               <CheckCircle className="w-4 h-4 text-gray-400" />

@@ -1,5 +1,5 @@
-// /mnt/data/NetProfitChart.tsx
 import { Card } from './ui/card';
+import { TrendingUp } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart,
@@ -40,7 +40,10 @@ export function NetProfitChart({ netProfitData, monthlyLabels, currentYear }: Ne
   return (
     <Card className="p-6 bg-white border-gray-200">
       <div className="mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Net Profit Trend</h3>
+        <div className="flex items-center gap-2 mb-2">
+          <TrendingUp className="w-5 h-5 text-gray-600" />
+          <h3 className="text-gray-900">Net Profit Trend</h3>
+        </div>
         <p className="text-gray-500 text-sm">Monthly Net Profit (Income - Expense - Investment) — {currentYear}</p>
       </div>
 

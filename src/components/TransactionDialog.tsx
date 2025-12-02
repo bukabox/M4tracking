@@ -1,9 +1,4 @@
-// src/components/TransactionDialog.tsx
-// Minimal changes: do NOT modify stickerId input value.
-// Ensure payload.stickerId equals exactly what user typed (if provided).
-// Keep UI unchanged. Dispatch 'transaction:added' after success.
-// Based on original file. :contentReference[oaicite:2]{index=2}
-
+// TransactionDialog.tsx
 import React, { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
@@ -30,6 +25,13 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // --- BTC specific state (editable price) ---
+  const [btcPriceIdr, setBtcPriceIdr] = useState<number | null>(null); // numeric internal
+  const [btcPriceInput, setBtcPriceInput] = useState<string>("");     // raw digits string
+  const [userEditedBtcPrice, setUserEditedBtcPrice] = useState<boolean>(false);
+  const [btcUnits, setBtcUnits] = useState<number>(0);
+  const [loadingBtcPrice, setLoadingBtcPrice] = useState<boolean>(false);
+
   useEffect(() => {
     if (open) {
       setDate(new Date().toISOString().slice(0, 10));
@@ -45,6 +47,10 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
     setAmount("0");
     setActive("income");
     setError(null);
+    setBtcPriceIdr(null);
+    setBtcPriceInput("");
+    setUserEditedBtcPrice(false);
+    setBtcUnits(0);
   };
 
   const fmt = (v: string) => {
@@ -53,9 +59,34 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
   };
   const parse = (v: string) => Number(String(v).replace(/[^0-9.-]/g, "")) || 0;
 
+  // when amount changes: update BTC units if BTC mode active
   const onAmountChange = (raw: string) => {
     const digits = raw.replace(/[^0-9]/g, "");
     setAmount(digits || "0");
+
+    const invested = Number(digits || "0");
+    const priceToUse = (userEditedBtcPrice && btcPriceInput) ? Number(btcPriceInput.replace(/[^0-9.-]/g, "")) : (btcPriceIdr || 0);
+    if ((active === "investment") && String(label || "").trim().toLowerCase() === "btc" && priceToUse && invested > 0) {
+      setBtcUnits(Number((invested / priceToUse).toFixed(8)));
+    } else {
+      setBtcUnits(0);
+    }
+  };
+
+  // handler for editable Harga Entry input
+  const onBtcPriceChange = (raw: string) => {
+    setUserEditedBtcPrice(true);
+    const digits = String(raw).replace(/[^0-9]/g, "");
+    setBtcPriceInput(digits || "");
+    const priceNum = Number(digits || "0") || null;
+    setBtcPriceIdr(priceNum);
+
+    const invested = Number(amount || "0");
+    if (priceNum && invested > 0) {
+      setBtcUnits(Number((invested / priceNum).toFixed(8)));
+    } else {
+      setBtcUnits(0);
+    }
   };
 
   const validate = (): string | null => {
@@ -65,8 +96,49 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
     return null;
   };
 
-  // NOTE: we intentionally DO NOT attempt to modify stickerId value the user typed.
-  // We will store stickerId as-is (if provided), and add a `sticker:{ID}` marker in note for backward compatibility.
+  // fetch BTC price when dialog opened or when label becomes BTC while tab is investment
+  useEffect(() => {
+    let mounted = true;
+    async function loadBtcPrice() {
+      const isBtc = (active === "investment") && String(label || "").trim().toLowerCase() === "btc";
+      if (!isBtc) {
+        if (mounted) {
+          setBtcPriceIdr(null);
+          if (!userEditedBtcPrice) setBtcPriceInput("");
+          setBtcUnits(0);
+        }
+        return;
+      }
+      setLoadingBtcPrice(true);
+      try {
+        const API_BASE = import.meta.env.VITE_API_BASE || '';
+        const res = await fetch(`${API_BASE}/api/crypto_prices?vs_currency=idr&symbols=btc`);
+
+        if (!res.ok) {
+          setLoadingBtcPrice(false);
+          return;
+        }
+        const j = await res.json();
+        const price = (j?.bitcoin?.idr) ?? (j?.btc?.idr) ?? (j?.btc) ?? null;
+        if (mounted && price) {
+          setBtcPriceIdr(Number(price));
+          if (!userEditedBtcPrice) setBtcPriceInput(String(Math.round(Number(price))));
+          const invested = Number(amount || "0");
+          const usedPrice = (userEditedBtcPrice && btcPriceInput) ? Number(btcPriceInput.replace(/[^0-9.-]/g, "")) : Number(price);
+          if (invested > 0 && usedPrice > 0) {
+            setBtcUnits(Number((invested / usedPrice).toFixed(8)));
+          }
+        }
+      } catch (e) {
+        console.warn("loadBtcPrice failed", e);
+      } finally {
+        if (mounted) setLoadingBtcPrice(false);
+      }
+    }
+    loadBtcPrice();
+    return () => { mounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, active, label, userEditedBtcPrice]);
 
   const submitTx = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -80,7 +152,7 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
     setLoading(true);
     setError(null);
 
-    // prepare base payload
+    // base payload for add_transaction
     const payload: any = {
       type: active,
       date,
@@ -90,13 +162,26 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
       note: note || "",
     };
 
-    // If income + stream is LINE and stickerId input exists — send stickerId AS-IS
+    // If INCOME & stream LINE → sticker handling (unchanged)
     if (active === "income" && (stream || "").toString().toLowerCase() === "line" && stickerId.trim().length > 0) {
       payload.stickerId = stickerId.trim();
-      // ensure canonical note marker 'sticker:ID' for ProductList/backwards compatibility
       const marker = `sticker:${stickerId.trim()}`;
       if (!payload.note.includes('sticker:')) payload.note = payload.note.trim() ? `${payload.note.trim()} ${marker}` : marker;
       else payload.note = payload.note.replace(/sticker[:=]\s*\d+/i, marker);
+    }
+
+    // --- If BTC investment: attach price_idr and btc_amount to add_transaction payload (so table shows directly) ---
+    const isBtc = (active === "investment") && String(label || "").trim().toLowerCase() === "btc";
+    let usedPriceNumber: number | null = null;
+    let btcAmountComputed = 0;
+    if (isBtc) {
+      usedPriceNumber = (userEditedBtcPrice && btcPriceInput) ? Number(btcPriceInput.replace(/[^0-9.-]/g, "")) : (btcPriceIdr || null);
+      const investedIdr = Number(parse(amount));
+      btcAmountComputed = usedPriceNumber && usedPriceNumber > 0 ? Number((investedIdr / usedPriceNumber).toFixed(8)) : 0;
+
+      // attach fields to payload for immediate display in TransactionTable
+      payload.price_idr = usedPriceNumber ? Math.round(usedPriceNumber) : null;
+      payload.btc_amount = btcAmountComputed;
     }
 
     try {
@@ -109,22 +194,48 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(json?.error || "Server error");
+        setLoading(false);
         return;
       }
 
-      // log returned transaction for debugging (harmless)
-      try { console.debug("transaction saved:", json.transaction ?? json); } catch (_) {}
-
       try { onSaved && onSaved(json.transaction ?? json); } catch (err) { console.error(err); }
 
-      // dispatch global event so components like ProductList can react immediately
       try {
         window.dispatchEvent(new CustomEvent('transaction:added', { detail: json.transaction ?? json }));
-      } catch (e) { /* ignore in older browsers */ }
+      } catch (e) {}
+
+      // Also save to crypto holdings (same as before)
+      if (isBtc) {
+        try {
+          const investedIdr = Number(parse(amount));
+          const usedPrice = usedPriceNumber || 0;
+          const btcAmount = btcAmountComputed;
+          const cryptoBody = {
+            symbol: "btc",
+            name: "Bitcoin",
+            amount: btcAmount,
+            price_idr: usedPrice ? Math.round(usedPrice) : null,
+            invested_idr: Math.round(investedIdr),
+            date,
+            note: note || "" 
+          };
+          const r2 = await fetch("/api/add_crypto_buy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cryptoBody)
+          });
+          if (!r2.ok) {
+            console.warn("add_crypto_buy failed", await r2.text());
+          } else {
+            try { window.dispatchEvent(new Event("crypto:updated")); } catch(e){}
+          }
+        } catch (e) {
+          console.warn("posting to add_crypto_buy failed", e);
+        }
+      }
 
       reset();
       onOpenChange(false);
-
     } catch (err: any) {
       setError(err?.message || "Network error");
     } finally {
@@ -132,13 +243,11 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
     }
   };
 
-
   const submitLabel =
     active === "income" ? "Add Income" :
       active === "expense" ? "Add Expense" :
         "Add Investment";
 
-  // helper: show sticker input only when active === income AND stream === "LINE"
   const showStickerInput = active === "income" && (stream || "").toString().toLowerCase() === "line";
 
   return (
@@ -158,10 +267,9 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
               <TabsTrigger value="investment" className="flex-1 text-center mx-1 rounded-md">Investment</TabsTrigger>
             </TabsList>
 
-            {/* ---------------- INCOME ---------------- */}
+            {/* INCOME */}
             <TabsContent value="income">
               <form onSubmit={submitTx} className="space-y-4">
-
                 <div>
                   <Label htmlFor="tx-date">Date</Label>
                   <Input id="tx-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -173,14 +281,12 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
                     value={label} onChange={(e) => setLabel(e.target.value)} />
                 </div>
 
-                {/* STREAM hanya untuk INCOME */}
                 <div>
                   <Label htmlFor="tx-stream">Stream / Platform</Label>
                   <Input id="tx-stream" type="text" placeholder="LINE, Etsy, Shopee, dll"
                     value={stream} onChange={(e) => setStream(e.target.value)} />
                 </div>
 
-                {/* If stream is LINE and active is income, show sticker id input */}
                 {showStickerInput && (
                   <div>
                     <Label htmlFor="tx-sticker-id">Sticker ID (LINE)</Label>
@@ -216,14 +322,12 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
                     {loading ? "Saving…" : submitLabel}
                   </Button>
                 </div>
-
               </form>
             </TabsContent>
 
-            {/* ---------------- EXPENSE ---------------- */}
+            {/* EXPENSE */}
             <TabsContent value="expense">
               <form onSubmit={submitTx} className="space-y-4">
-
                 <div>
                   <Label htmlFor="tx-date-e">Date</Label>
                   <Input id="tx-date-e" type="date" value={date}
@@ -235,8 +339,6 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
                   <Input id="tx-label-e" type="text" placeholder="Nama expense (contoh: Office Rent)"
                     value={label} onChange={(e) => setLabel(e.target.value)} />
                 </div>
-
-                {/* TIDAK ADA STREAM DI EXPENSE */}
 
                 <div>
                   <Label htmlFor="tx-amount-e">Amount (Rp)</Label>
@@ -264,14 +366,12 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
                     {loading ? "Saving…" : submitLabel}
                   </Button>
                 </div>
-
               </form>
             </TabsContent>
 
-            {/* ---------------- INVESTMENT ---------------- */}
+            {/* INVESTMENT */}
             <TabsContent value="investment">
               <form onSubmit={submitTx} className="space-y-4">
-
                 <div>
                   <Label htmlFor="tx-date-i">Date</Label>
                   <Input id="tx-date-i" type="date" value={date}
@@ -284,8 +384,6 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
                     value={label} onChange={(e) => setLabel(e.target.value)} />
                 </div>
 
-                {/* TIDAK ADA STREAM DI INVESTMENT */}
-
                 <div>
                   <Label htmlFor="tx-amount-i">Amount (Rp)</Label>
                   <div className="relative">
@@ -294,6 +392,25 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
                       onChange={(e) => onAmountChange(e.target.value)} className="pl-10" />
                   </div>
                 </div>
+
+                {/* BTC helper UI — editable Harga Entry + computed Unit */}
+                {(active === "investment") && String(label || "").trim().toLowerCase() === "btc" && (
+                  <div>
+                    <Label>Harga Entry (IDR)</Label>
+                    <div className="flex items-center gap-3">
+                      <Input
+                        id="tx-btc-price"
+                        inputMode="numeric"
+                        value={btcPriceInput ? new Intl.NumberFormat('id-ID').format(Number(btcPriceInput)) : (loadingBtcPrice ? "Loading..." : "")}
+                        placeholder={loadingBtcPrice ? "Loading..." : "Harga Entry (IDR)"}
+                        onChange={(e) => onBtcPriceChange(e.target.value)}
+                        className="w-48"
+                      />
+                      <div className="text-xs text-gray-500">Unit: {btcUnits > 0 ? `${btcUnits} BTC` : "—"}</div>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">Unit = Nominal ÷ Harga Entry. Jika kosong, sistem pakai harga realtime.</p>
+                  </div>
+                )}
 
                 <div>
                   <Label htmlFor="tx-note-i">Note</Label>
@@ -312,9 +429,9 @@ export function TransactionDialog({ open, onOpenChange, onSaved }: Props) {
                     {loading ? "Saving…" : submitLabel}
                   </Button>
                 </div>
-
               </form>
             </TabsContent>
+
           </Tabs>
         </div>
       </DialogContent>
