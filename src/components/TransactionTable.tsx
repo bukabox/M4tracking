@@ -1,8 +1,3 @@
-// TransactionTable.tsx
-// Versi diperbarui: menambahkan palette warna & icons untuk Etsy, Mojitok, Stipop, Youtub,
-// serta deterministic random color generator untuk kategori lainnya.
-// Perubahan hanya pada mapping warna/icon — UI & layout asli dipertahankan.
-
 import { forwardRef, useImperativeHandle, useState, useMemo, useEffect } from 'react';
 import { Card } from './ui/card';
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from './ui/accordion';
@@ -21,12 +16,7 @@ import {
   Car,
   ShoppingBag,
   MapPin,
-  CreditCard,
-  PencilRuler,
-  Smile,
-  MessageCircle,
-  Heart,
-  Play
+  CreditCard
 } from 'lucide-react';
 
 // if you have a shared resolver keep it for compatibility; fallback to local getCategoryIcon if not available
@@ -199,87 +189,6 @@ const isBitcoinCategory = (tx: any) => {
 };
 
 // -------------------------
-// NEW: Category color & icon mapping
-// - Use palette from TopPerformance / STREAM_COLORS for known streams
-// - Icons from lucide-react per request
-// - Deterministic HSL color generation for unknown categories
-// -------------------------
-
-// Known stream/category colors (match TopPerformance / backend STREAM_COLORS if available)
-const KNOWN_CATEGORY_COLORS: Record<string, string> = {
-  'etsy': '#F16521',    // from STREAM_COLORS / TopPerformance mapping
-  'mojitok': '#8B5CF6', // purple
-  'm ojitok': '#8B5CF6', // tolerant mapping
-  'stipop': '#FF4E59',
-  'line': '#06C755',
-  'youtub': '#FF0000',
-  'youtube': '#FF0000'
-};
-
-// Icons mapping (Lucide components)
-const KNOWN_CATEGORY_ICONS: Record<string, JSX.Element> = {
-  'etsy': <PencilRuler className="w-5 h-5" />,
-  'mojitok': <Smile className="w-5 h-5" />,
-  'stipop': <MessageCircle className="w-5 h-5" />,
-  'youtub': <Play className="w-5 h-5" />,
-  'youtube': <Play className="w-5 h-5" />
-};
-
-// deterministic string -> color (HSL) so same category yields same color
-function stringToHslColor(str: string, saturation = 60, lightness = 50) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    hash = hash & hash;
-  }
-  const h = Math.abs(hash) % 360;
-  return `hsl(${h} ${saturation}% ${lightness}%)`;
-}
-
-// Resolve category color and icon given a tx object (stream/category/label)
-function resolveCategoryAppearance(tx: any) {
-  const raw = (tx.stream || tx.category || tx.label || '').toString().trim();
-  const key = raw.toLowerCase();
-
-  // direct known match
-  if (KNOWN_CATEGORY_COLORS[key]) {
-    const color = KNOWN_CATEGORY_COLORS[key];
-    const icon = KNOWN_CATEGORY_ICONS[key] ?? <Tag className="w-5 h-5" />;
-    return { color, icon, name: raw || key };
-  }
-
-  // tolerant matching: check includes
-  for (const k of Object.keys(KNOWN_CATEGORY_COLORS)) {
-    if (key.includes(k)) {
-      const color = KNOWN_CATEGORY_COLORS[k];
-      const icon = KNOWN_CATEGORY_ICONS[k] ?? <Tag className="w-5 h-5" />;
-      return { color, icon, name: raw || k };
-    }
-  }
-
-  // fallback to shared resolver if exists
-  if (getCategoryInfo) {
-    try {
-      const info = getCategoryInfo(raw);
-      if (info && info.color) {
-        return {
-          color: info.color,
-          icon: info.icon ?? <Tag className="w-5 h-5" />,
-          name: info.name || raw
-        };
-      }
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  // otherwise deterministic generated color + generic icon based on tx.type/label heuristics
-  const color = stringToHslColor(key || String(tx.type || 'other'));
-  const baseIcon = getCategoryIcon(tx.label, tx.type);
-  return { color, icon: baseIcon, name: raw || getCategoryName(tx.label, tx.type) };
-}
-
-// -------------------------
 // Component
 // -------------------------
 export const TransactionTable = forwardRef<TransactionTableRef, TransactionTableProps>(function TransactionTable(
@@ -435,14 +344,6 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
             let categoryIcon = null;
             let wrapperClass = 'w-12 h-12 rounded-full flex items-center justify-center text-white bg-gray-300';
             let categoryName = '';
-            let resolvedAppearance: any = null;
-            try {
-              resolvedAppearance = resolveCategoryAppearance(tx);
-              // resolvedAppearance => { color, icon, name }
-            } catch (e) {
-              resolvedAppearance = null;
-            }
-
             if (getCategoryInfo) {
               try {
                 const info = getCategoryInfo(tx.label || tx.category || '');
@@ -492,30 +393,24 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
                 <img src={BTC_LOGO_URL} alt="BTC" className="w-10 h-10" style={{ display: 'block' }} />
               </div>
             ) : (
-              // Use resolvedAppearance color & icon (preserves original logic but adds requested palette/icons)
+              // For expense specifically, use backup's colored circle with getCategoryIcon and "Expense" label
               <div
-                className={`w-12 h-12 rounded-full flex items-center justify-center text-white`}
-                style={{ backgroundColor: resolvedAppearance?.color || ( (tx.type || '').toLowerCase() === 'income' ? '#16a34a' : (tx.type || '').toLowerCase() === 'investment' ? '#f59e0b' : '#ef4444') }}
+                className={`w-12 h-12 rounded-full flex items-center justify-center text-white ${
+                  (tx.type || '').toLowerCase() === 'income'
+                    ? 'bg-green-500'
+                    : (tx.type || '').toLowerCase() === 'investment'
+                      ? 'bg-orange-500'
+                      : 'bg-red-500' // Expense = red per backup
+                }`}
               >
-                {/* For Stipop we overlay a small heart badge to emulate message-circle-heart if requested */}
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {resolvedAppearance?.icon ?? categoryIcon}
-                  {(() => {
-                    const raw = (tx.stream || tx.category || tx.label || '').toString().toLowerCase();
-                    if (raw.includes('stipop')) {
-                      return <span style={{ position: 'absolute', right: -4, bottom: -4, background: 'white', borderRadius: 9999, padding: '2px' }}><Heart className="w-3 h-3 text-red-500" /></span>;
-                    }
-                    // For youtube/youtub show play on red circle - handled by background color already (red)
-                    return null;
-                  })()}
-                </div>
+                {getCategoryIcon(tx.label, tx.type)}
               </div>
             );
 
             // Ensure categoryName uses "Expense" when tx.type === 'expense' (user requested)
             const finalCategoryName = (tx.type || '').toLowerCase() === 'expense'
               ? 'Expense'
-              : (resolvedAppearance?.name || (getCategoryInfo ? (getCategoryInfo(tx.label || tx.category || '')?.name ?? categoryName) : categoryName));
+              : (getCategoryInfo ? (getCategoryInfo(tx.label || tx.category || '')?.name ?? categoryName) : categoryName);
 
             return (
               <AccordionItem
@@ -578,102 +473,102 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
                 </AccordionTrigger>
 
                 <AccordionContent className="pt-4">
-                  <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+                  <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
                     <div className="flex items-center gap-2 mb-4">
-                      <FileText className="w-4 h-4 text-blue-600" />
-                      <span className="text-gray-900">Transaction Receipt</span>
+                      <FileText className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                      <span className="text-gray-900 dark:text-gray-100">Transaction Receipt</span>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-3">
                         <div>
                           <div className="flex items-center gap-2 mb-1">
-                            <Hash className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm text-gray-500">Transaction ID</span>
+                            <Hash className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                            <span className="text-sm text-gray-500 dark:text-gray-400">Transaction ID</span>
                           </div>
-                          <p className="text-gray-900 ml-6">TXN-{tx.id}</p>
+                          <p className="text-gray-900 dark:text-gray-200 ml-6">TXN-{tx.id}</p>
                         </div>
 
                         <div>
                           <div className="flex items-center gap-2 mb-1">
-                            <Clock className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm text-gray-500">Date & Time</span>
+                            <Clock className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                            <span className="text-sm text-gray-500 dark:text-gray-400">Date & Time</span>
                           </div>
-                          <p className="text-gray-900 ml-6">{formatDateTime(tx.date)}</p>
+                          <p className="text-gray-900 dark:text-gray-200 ml-6">{formatDateTime(tx.date)}</p>
                         </div>
 
                         <div>
                           <div className="flex items-center gap-2 mb-1">
-                            <MapPin className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm text-gray-500">Merchant</span>
+                            <MapPin className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                            <span className="text-sm text-gray-500 dark:text-gray-400">Merchant</span>
                           </div>
-                          <p className="text-gray-900 ml-6">Payment Gateway</p>
+                          <p className="text-gray-900 dark:text-gray-200 ml-6">Payment Gateway</p>
                         </div>
                       </div>
 
                       <div className="space-y-3">
                         <div>
                           <div className="flex items-center gap-2 mb-1">
-                            <CreditCard className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm text-gray-500">Payment Method</span>
+                            <CreditCard className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                            <span className="text-sm text-gray-500 dark:text-gray-400">Payment Method</span>
                           </div>
-                          <p className="text-gray-900 ml-6">Bank Transfer</p>
+                          <p className="text-gray-900 dark:text-gray-200 ml-6">Bank Transfer</p>
                         </div>
 
                         <div>
                           <div className="flex items-center gap-2 mb-1">
-                            <CheckCircle className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm text-gray-500">Status</span>
+                            <CheckCircle className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                            <span className="text-sm text-gray-500 dark:text-gray-400">Status</span>
                           </div>
                           <div className="ml-6">
-                            <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Completed</Badge>
+                            <Badge className="bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/40">Completed</Badge>
                           </div>
                         </div>
 
                         <div>
                           <div className="flex items-center gap-2 mb-1">
-                            <Tag className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm text-gray-500">Category</span>
+                            <Tag className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                            <span className="text-sm text-gray-500 dark:text-gray-400">Category</span>
                           </div>
-                          <p className="text-gray-900 ml-6">{finalCategoryName}</p>
+                          <p className="text-gray-900 dark:text-gray-200 ml-6">{finalCategoryName}</p>
                         </div>
                       </div>
                     </div>
 
                     {/* Crypto details: show ONLY for Bitcoin category */}
                     {isBTC && (
-                      <div className="mt-4 pt-4 border-t border-blue-200 space-y-2">
+                      <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-2">
                         <div className="flex justify-between items-center">
-                          <span className="text-gray-600">Harga Entry (IDR)</span>
-                          <span className="text-gray-900">
+                          <span className="text-gray-600 dark:text-gray-400">Harga Entry (IDR)</span>
+                          <span className="text-gray-900 dark:text-gray-200">
                             { displayPrice }
                           </span>
                         </div>
                         <div className="flex justify-between items-center">
-                          <span className="text-gray-600">Jumlah (BTC)</span>
-                          <span className="text-gray-900">
+                          <span className="text-gray-600 dark:text-gray-400">Jumlah (BTC)</span>
+                          <span className="text-gray-900 dark:text-gray-200">
                             { displayUnit }
                           </span>
                         </div>
                       </div>
                     )}
 
-                    <div className="mt-4 pt-4 border-t border-blue-200 space-y-2">
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-2">
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Subtotal</span>
-                        <span className="text-gray-900">{formatCurrency(tx.amount)}</span>
+                        <span className="text-gray-600 dark:text-gray-400">Subtotal</span>
+                        <span className="text-gray-900 dark:text-gray-200">{formatCurrency(tx.amount)}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-900">Total Amount</span>
-                        <span className={`${(tx.type || '').toLowerCase() === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                        <span className="text-gray-900 dark:text-gray-100">Total Amount</span>
+                        <span className={`${(tx.type || '').toLowerCase() === 'income' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                           {(tx.type || '').toLowerCase() === 'income' ? '+' : ''}{formatCurrency(tx.amount)}
                         </span>
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-4 border-t border-blue-200">
-                      <p className="text-gray-500 text-sm mb-1">Description</p>
-                      <p className="text-gray-900">
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                      <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">Description</p>
+                      <p className="text-gray-900 dark:text-gray-200">
                         {tx.note && String(tx.note).trim().length > 0 ? tx.note : (
                           (tx.type || '').toLowerCase() === 'income'
                             ? `Incoming payment for ${(tx.label || tx.category || '').toLowerCase()}`

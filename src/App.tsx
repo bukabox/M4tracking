@@ -352,6 +352,15 @@ export default function App() {
       loadInitialData();
     }
   };
+  // Initialize dark mode from localStorage on mount
+  useEffect(() => {
+    const savedDarkMode = localStorage.getItem('darkMode') === 'true';
+    if (savedDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50">

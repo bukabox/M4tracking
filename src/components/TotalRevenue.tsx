@@ -134,7 +134,7 @@ export function TotalRevenue({ lifetimeRevenue, initialModal = 25000000, onModal
                   cx="40"
                   cy="40"
                   r="32"
-                  stroke="#e5e7eb"
+                  className="stroke-gray-200 dark:stroke-gray-700"
                   strokeWidth="6"
                   fill="none"
                 />
@@ -182,7 +182,7 @@ export function TotalRevenue({ lifetimeRevenue, initialModal = 25000000, onModal
       {/* Progress Bar */}
       {showLifetime && (
         <div className="mt-4">
-          <div className="w-full bg-gray-50 rounded-full overflow-hidden" style={{ height: '0.5rem' }}>
+          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden" style={{ height: '0.5rem' }}>
             <div
               className="rounded-full"
               style={{
