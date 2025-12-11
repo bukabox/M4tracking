@@ -30,6 +30,7 @@
             "@radix-ui/react-toggle": "^1.1.2",
             "@radix-ui/react-toggle-group": "^1.1.2",
             "@radix-ui/react-tooltip": "^1.1.8",
+            "@react-oauth/google": "^0.12.2",
             "@tailwindcss/vite": "^4.1.17",
             "chart.js": "^4.5.1",
             "class-variance-authority": "^0.7.1",
@@ -46,11 +47,13 @@
             "jspdf-autotable": "^5.0.2",
             "lucide-react": "^0.487.0",
             "next-themes": "^0.4.6",
+            "papaparse": "^5.5.3",
             "react": "^18.3.1",
             "react-chartjs-2": "^5.3.1",
             "react-day-picker": "^8.10.1",
             "react-dom": "^18.3.1",
             "react-hook-form": "^7.55.0",
+            "react-hot-toast": "^2.6.0",
             "react-resizable-panels": "^2.1.7",
             "recharts": "^2.15.2",
             "sonner": "^2.0.3",
@@ -66,6 +69,7 @@
       "scripts": {
             "dev": "vite",
             "build": "vite build",
-            "start-proxy": "node server.js"
+            "start-proxy": "node server.js",
+            "dev-m4": "node scripts/dev-m4.js"
       }
 }

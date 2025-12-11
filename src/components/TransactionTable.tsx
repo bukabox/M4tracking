@@ -16,8 +16,12 @@ import {
   Car,
   ShoppingBag,
   MapPin,
-  CreditCard
+  CreditCard,
+  BanknoteArrowDown,
+  BanknoteArrowUp,
+  ChevronDown
 } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 // if you have a shared resolver keep it for compatibility; fallback to local getCategoryIcon if not available
 let getCategoryInfo: any = undefined;
@@ -37,8 +41,9 @@ const getCategoryIcon = (label?: string, type?: string) => {
   const lowerLabel = (label || '').toLowerCase();
   const t = (type || '').toLowerCase();
 
-  if (t === 'income') return <TrendingUp className="w-5 h-5" />;
+  if (t === 'income') return <BanknoteArrowDown className="w-5 h-5" />;
   if (t === 'investment') return <TrendingUp className="w-5 h-5" />;
+  if (t === 'expense') return <BanknoteArrowUp className="w-5 h-5" />;
   if (lowerLabel.includes('rent') || lowerLabel.includes('house')) return <Home className="w-5 h-5" />;
   if (lowerLabel.includes('food') || lowerLabel.includes('groceries') || lowerLabel.includes('restaurant')) return <Utensils className="w-5 h-5" />;
   if (lowerLabel.includes('transport') || lowerLabel.includes('car') || lowerLabel.includes('gas')) return <Car className="w-5 h-5" />;
@@ -58,6 +63,25 @@ const getCategoryName = (label?: string, type?: string) => {
   if (lowerLabel.includes('transport') || lowerLabel.includes('car')) return 'Transportation';
   if (lowerLabel.includes('shopping')) return 'Shopping';
   return 'General';
+};
+
+const getCategoryColor = (label?: string, type?: string) => {
+  const lowerLabel = (label || '').toLowerCase();
+  const t = (type || '').toLowerCase();
+
+  // Type-based colors
+  if (t === 'income') return 'bg-green-500';
+  if (t === 'expense') return 'bg-red-500';
+  if (t === 'investment') return 'bg-orange-500';
+  
+  // Label-based colors for subcategories
+  if (lowerLabel.includes('rent') || lowerLabel.includes('house')) return 'bg-blue-500';
+  if (lowerLabel.includes('food') || lowerLabel.includes('groceries') || lowerLabel.includes('restaurant')) return 'bg-yellow-500';
+  if (lowerLabel.includes('transport') || lowerLabel.includes('car') || lowerLabel.includes('gas')) return 'bg-purple-500';
+  if (lowerLabel.includes('shopping') || lowerLabel.includes('clothes')) return 'bg-pink-500';
+  
+  // Default
+  return 'bg-gray-500';
 };
 
 // -------------------------
@@ -195,8 +219,14 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
   { transactions = [], cryptoRefs = undefined, onDelete, pageSize = 5 }: TransactionTableProps,
   ref
 ) {
+  const { t } = useLanguage();
   // resolved cryptoRefs not strictly required for BTC-only display, kept for compatibility
   const resolvedCryptoRefs = Array.isArray(cryptoRefs) && cryptoRefs.length > 0 ? cryptoRefs : (Array.isArray((window as any).__CRYPTO_REFS__) ? (window as any).__CRYPTO_REFS__ : []);
+
+  // Track screen size for responsive behavior (same pattern as Header)
+  const [isDesktop, setIsDesktop] = useState<boolean>(
+    typeof window !== 'undefined' && window.innerWidth >= 768
+  );
 
   const [activeTab, setActiveTab] = useState<'income' | 'expense' | 'investment'>('income');
   const [pageByTab, setPageByTab] = useState<Record<string, number>>({
@@ -205,8 +235,37 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
     investment: 1
   });
 
+  // Track screen size changes
+  useEffect(() => {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth >= 768);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const sorted = useMemo(() => {
-    return [...(transactions || [])].sort((a, b) => {
+    // Remove duplicates based on ID, keeping the LATEST transaction (most recent date)
+    const uniqueMap = new Map();
+    (transactions || []).forEach(tx => {
+      const id = String(tx.id || '');
+      if (!id) return; // Skip transactions without ID
+      
+      const existing = uniqueMap.get(id);
+      if (!existing) {
+        uniqueMap.set(id, tx);
+      } else {
+        // Keep the transaction with the more recent date
+        const existingDate = new Date(existing.date || 0).getTime();
+        const newDate = new Date(tx.date || 0).getTime();
+        if (newDate > existingDate) {
+          uniqueMap.set(id, tx);
+        }
+      }
+    });
+    
+    return Array.from(uniqueMap.values()).sort((a, b) => {
       const ta = new Date(a.date || 0).getTime();
       const tb = new Date(b.date || 0).getTime();
       if (tb !== ta) return tb - ta;
@@ -234,7 +293,16 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
     const list = tab === 'income' ? incomeList : tab === 'expense' ? expenseList : investmentList;
     const page = currentPageFor(tab);
     const start = (page - 1) * pageSize;
-    return list.slice(start, start + pageSize);
+    const slice = list.slice(start, start + pageSize);
+    
+    // Dedupe by id+date to prevent duplicate keys in rendering
+    const seen = new Set<string>();
+    return slice.filter((tx) => {
+      const key = `${String(tx.id ?? '')}|${String(tx.date ?? '')}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   };
 
   useImperativeHandle(ref, () => ({
@@ -315,48 +383,122 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
     return (
       <>
         <Accordion type="single" collapsible className="space-y-3">
-          {visible.map(tx => {
+          {visible.map((tx, idx) => {
             if (DEBUG_LOG) console.debug('RENDER TX', tx?.id, tx);
+
+            // Generate safe unique key with index fallback
+            const itemKey = tx.id != null ? String(tx.id) : `tmp-${idx}`;
 
             // sticker id extraction (same logic as backup)
             const sid = (() => {
               try {
                 if (!tx) return null;
+
+                // 1) explicit stickerId field (preferred)
+                if (tx.stickerId) {
+                  const s = String(tx.stickerId).trim();
+                  if (s && s.length >= 4 && /^[0-9]+$/.test(s)) return s;
+                }
+
+                // 1.5) explicit url_id or store_id on tx (sometimes used)
+                const explicitUrlId = ((tx as any).url_id || (tx as any).store_id || (tx as any).line_store_id);
+                if (explicitUrlId) {
+                  const s = String(explicitUrlId).trim();
+                  if (s && s.length >= 4 && /^[0-9]+$/.test(s)) return s;
+                }
+
+                // 2) try find in note (sticker:<id>)
                 if (tx.note && typeof tx.note === 'string') {
                   const m = tx.note.match(/sticker[:=]\s*([0-9]+)/i);
                   if (m) return m[1];
                 }
-                if (tx.packId) return String(tx.packId);
-                if (tx.stickerId) {
-                  const s = String(tx.stickerId);
-                  if (String(tx.id) !== s && s.length >= 4 && s.length <= 12) return s;
+
+                // 3) fallback to product_id if present (this is grouping key from import)
+                if ((tx as any).product_id) {
+                  const pid = String((tx as any).product_id).trim();
+                  if (pid && /^[0-9]{4,}$/.test(pid)) return pid;
                 }
+
+                // 4) packId as older fallback
+                if ((tx as any).packId) {
+                  const s = String((tx as any).packId).trim();
+                  if (s && s.length >= 4 && /^[0-9]+$/.test(s)) return s;
+                }
+
+                // 5) try to extract numeric id from label
                 if (tx.label && typeof tx.label === 'string') {
                   const m2 = tx.label.match(/\b([0-9]{4,})\b/);
                   if (m2) return m2[1];
                 }
+
                 return null;
               } catch { return null; }
             })();
             const staticUrl = sid ? `https://stickershop.line-scdn.net/stickershop/v1/product/${encodeURIComponent(sid)}/LINEStorePC/main.png?v=1` : null;
 
-            // category info (prefer shared resolver if available)
-            let categoryIcon = null;
-            let wrapperClass = 'w-12 h-12 rounded-full flex items-center justify-center text-white bg-gray-300';
+            // Determine category icon and name
+            // PRIORITY SYSTEM:
+            // 1. For Income/Expense with generic labels → use type-based icons (BanknoteArrowDown/Up)
+            // 2. For Investment with specific labels → use getCategoryInfo for detailed icons (Monitor, Laptop, etc)
+            // 3. For Expense with specific labels → use getCategoryInfo or label-based icons
+            // 4. Fallback → use local helpers
+            
+            let categoryIcon: any = null;
+            let categoryBgColor = '';
             let categoryName = '';
-            if (getCategoryInfo) {
+            const t = (tx.type || '').toLowerCase();
+            
+            // For INVESTMENT type, always try getCategoryInfo first for detailed mapping
+            if (t === 'investment' && getCategoryInfo) {
               try {
                 const info = getCategoryInfo(tx.label || tx.category || '');
                 categoryIcon = info.icon;
-                wrapperClass = info.wrapperClass || wrapperClass;
-                categoryName = info.name || '';
+                categoryBgColor = info.bgColor;
+                categoryName = info.name;
               } catch {
-                categoryIcon = null;
-                categoryName = '';
+                // Fallback to generic investment icon
+                categoryIcon = getCategoryIcon(tx.label, tx.type);
+                categoryBgColor = getCategoryColor(tx.label, tx.type);
+                categoryName = getCategoryName(tx.label, tx.type);
               }
-            } else {
-              // fallback to local helpers
+            }
+            // For INCOME type, use type-based icon (unless label suggests specific category)
+            else if (t === 'income') {
+              categoryIcon = <BanknoteArrowDown className="w-5 h-5" />;
+              categoryBgColor = 'bg-green-500';
+              categoryName = 'Income';
+            }
+            // For EXPENSE type, check if getCategoryInfo has specific match, otherwise use type-based
+            else if (t === 'expense') {
+              if (getCategoryInfo) {
+                try {
+                  const info = getCategoryInfo(tx.label || tx.category || '');
+                  // Only use getCategoryInfo if it's not the generic fallback
+                  if (info.key !== 'other') {
+                    categoryIcon = info.icon;
+                    categoryBgColor = info.bgColor;
+                    categoryName = info.name;
+                  } else {
+                    // Generic expense
+                    categoryIcon = getCategoryIcon(tx.label, tx.type);
+                    categoryBgColor = getCategoryColor(tx.label, tx.type);
+                    categoryName = 'Expense';
+                  }
+                } catch {
+                  categoryIcon = <BanknoteArrowUp className="w-5 h-5" />;
+                  categoryBgColor = 'bg-red-500';
+                  categoryName = 'Expense';
+                }
+              } else {
+                categoryIcon = getCategoryIcon(tx.label, tx.type);
+                categoryBgColor = getCategoryColor(tx.label, tx.type);
+                categoryName = getCategoryName(tx.label, tx.type);
+              }
+            }
+            // Fallback for other types
+            else {
               categoryIcon = getCategoryIcon(tx.label, tx.type);
+              categoryBgColor = getCategoryColor(tx.label, tx.type);
               categoryName = getCategoryName(tx.label, tx.type);
             }
 
@@ -383,7 +525,7 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
             // Avatar rendering:
             // - sticker thumbnail if sid
             // - BTC logo if BTC category
-            // - otherwise category circle (with Expense following backup style)
+            // - otherwise category circle using determined categoryIcon and categoryBgColor
             const avatar = sid ? (
               <div className="w-12 h-12 rounded-full overflow-hidden bg-white flex items-center justify-center">
                 <img src={staticUrl || undefined} alt={`${tx.label || 'sticker'} thumbnail`} className="w-12 h-12 object-contain" loading="lazy" />
@@ -393,81 +535,111 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
                 <img src={BTC_LOGO_URL} alt="BTC" className="w-10 h-10" style={{ display: 'block' }} />
               </div>
             ) : (
-              // For expense specifically, use backup's colored circle with getCategoryIcon and "Expense" label
+              // Use the determined categoryIcon and categoryBgColor
               <div
-                className={`w-12 h-12 rounded-full flex items-center justify-center text-white ${
-                  (tx.type || '').toLowerCase() === 'income'
-                    ? 'bg-green-500'
-                    : (tx.type || '').toLowerCase() === 'investment'
-                      ? 'bg-orange-500'
-                      : 'bg-red-500' // Expense = red per backup
-                }`}
+                className={`w-12 h-12 rounded-full flex items-center justify-center text-white ${categoryBgColor}`}
               >
-                {getCategoryIcon(tx.label, tx.type)}
+                {categoryIcon}
               </div>
             );
 
-            // Ensure categoryName uses "Expense" when tx.type === 'expense' (user requested)
-            const finalCategoryName = (tx.type || '').toLowerCase() === 'expense'
-              ? 'Expense'
-              : (getCategoryInfo ? (getCategoryInfo(tx.label || tx.category || '')?.name ?? categoryName) : categoryName);
+            // Ensure categoryName uses correct value based on type
+            const finalCategoryName = (() => {
+              const ttype = (tx.type || '').toLowerCase();
+              if (ttype === 'income') return 'Income';
+              if (ttype === 'expense') return 'Expense';
+              if (ttype === 'investment') return 'Investment';
+              // Fallback to category info or categoryName
+              return getCategoryInfo ? (getCategoryInfo(tx.label || tx.category || '')?.name ?? categoryName) : categoryName;
+            })();
 
             return (
               <AccordionItem
-                key={tx.id}
+                key={itemKey}
                 value={String(tx.id)}
                 id={`txn-${tx.id}`}
-                className="border border-gray-200 rounded-xl px-5 py-4 hover:border-gray-300 transition-colors"
+                className="border border-gray-200 rounded-xl relative overflow-visible md:overflow-hidden hover:border-gray-300 transition-colors"
               >
-                <AccordionTrigger className="hover:no-underline py-0">
-                  <div className="flex items-center justify-between w-full pr-2">
-                    <div className="flex items-center gap-3">
-                      {avatar}
+                {/* Delete Icon - Mobile Only (keluar 50% dari accordion, center vertical, smaller size) */}
+                {!isDesktop && (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      onDelete && onDelete(tx.id);
+                    }}
+                    onKeyDown={(e: React.KeyboardEvent) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onDelete && onDelete(tx.id);
+                      }
+                    }}
+                    className="absolute top-1/2 -translate-y-1/2 -right-4 z-20 w-8 h-8 rounded-full bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center justify-center cursor-pointer shadow-lg transition-colors"
+                    aria-label="Delete transaction"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-500 dark:text-red-400" />
+                  </div>
+                )}
 
-                      <div className="text-left">
-                        <p className="text-gray-900">{tx.label || tx.category || '—'}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-sm text-gray-500">
-                            {(() => {
-                              const ttype = String((tx as any)?.type ?? '').toLowerCase();
-                              const maybeStream = ((tx as any)?.stream ?? (tx as any)?.platform ?? (tx as any)?.source ?? '').toString().trim();
-                              if (ttype === 'income') {
-                                if (maybeStream.length > 0) return maybeStream;
-                                return 'Income';
-                              }
-                              return finalCategoryName;
-                            })()}
-                          </span>
-                          <span className="text-gray-300">•</span>
-                          <span className="text-sm text-gray-500">{formatDate(tx.date)}</span>
-                        </div>
+                {/* Delete Icon - Desktop Only (top-right inside accordion) */}
+                {isDesktop && (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      onDelete && onDelete(tx.id);
+                    }}
+                    onKeyDown={(e: React.KeyboardEvent) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onDelete && onDelete(tx.id);
+                      }
+                    }}
+                    className="absolute top-3 right-10 z-10 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-md cursor-pointer transition-colors"
+                    aria-label="Delete transaction"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-500 dark:text-red-400" />
+                  </div>
+                )}
+
+                <AccordionTrigger className="hover:no-underline px-5 py-4 [&[data-state=open]>div>.chevron]:rotate-180">
+                  {/* Row 1: Icon + Content + Nominal (vertically centered) */}
+                  <div className={`flex items-center gap-3 w-full ${isDesktop ? 'pr-14' : ''}`}>
+                    {avatar}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-gray-900 font-medium mb-1">{tx.label || tx.category || '—'}</p>
+                      
+                      {/* Row 2: Stream/Category • Date */}
+                      <div className="flex items-center gap-2 text-xs text-gray-500">
+                        <span>
+                          {(() => {
+                            const ttype = String((tx as any)?.type ?? '').toLowerCase();
+                            const maybeStream = ((tx as any)?.stream ?? (tx as any)?.platform ?? (tx as any)?.source ?? '').toString().trim();
+                            if (ttype === 'income') {
+                              if (maybeStream.length > 0) return maybeStream;
+                              return 'Income';
+                            }
+                            return finalCategoryName;
+                          })()}
+                        </span>
+                        <span className="text-gray-300">•</span>
+                        <span>{new Date(tx.date || '').toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}</span>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-3">
-                      <div className={`${(tx.type || '').toLowerCase() === 'income' ? 'text-green-600' : 'text-red-600'} font-semibold`}>
-                        {(tx.type || '').toLowerCase() === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
-                      </div>
-
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          onDelete && onDelete(tx.id);
-                        }}
-                        onKeyDown={(e: React.KeyboardEvent) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            onDelete && onDelete(tx.id);
-                          }
-                        }}
-                        className="hover:bg-red-50 p-1 rounded-md cursor-pointer"
-                        aria-label="Delete transaction"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-4 h-4 text-red-500" />
-                      </div>
+                    
+                    {/* Nominal - Right aligned and vertically centered */}
+                    <div className={`text-sm font-semibold whitespace-nowrap ${
+                      (tx.type || '').toLowerCase() === 'income' 
+                        ? 'text-green-600' 
+                        : (tx.type || '').toLowerCase() === 'investment'
+                        ? 'text-orange-600'
+                        : 'text-red-600'
+                    }`}>
+                      {(tx.type || '').toLowerCase() === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
                     </div>
                   </div>
                 </AccordionTrigger>
@@ -560,7 +732,13 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-gray-900 dark:text-gray-100">Total Amount</span>
-                        <span className={`${(tx.type || '').toLowerCase() === 'income' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                        <span className={`${
+                          (tx.type || '').toLowerCase() === 'income' 
+                            ? 'text-green-600 dark:text-green-400' 
+                            : (tx.type || '').toLowerCase() === 'investment'
+                            ? 'text-orange-600 dark:text-orange-400'
+                            : 'text-red-600 dark:text-red-400'
+                        }`}>
                           {(tx.type || '').toLowerCase() === 'income' ? '+' : ''}{formatCurrency(tx.amount)}
                         </span>
                       </div>
@@ -630,34 +808,37 @@ export const TransactionTable = forwardRef<TransactionTableRef, TransactionTable
   return (
     <Card className="p-6 bg-white border-gray-200" id="transaction-table-root">
       <div className="mb-6">
-        <div className="flex items-center gap-2 mb-2">
-          <List className="w-5 h-5 text-gray-600" />
-          <h3 className="text-gray-900">Transactions</h3>
-        </div>
-        <div className="flex items-center justify-between">
-          <p className="text-gray-500 text-sm">Filtered by type — Income, Expense, Investment</p>
-
-          <div className="flex items-center gap-2">
-            <div className="inline-flex rounded-md bg-gray-100 p-1">
-              <button
-                onClick={() => setActiveTab('income')}
-                className={`px-3 py-1 rounded ${activeTab === 'income' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600'}`}
-              >
-                Income <span className="ml-2 text-xs text-gray-400">({incomeList.length})</span>
-              </button>
-              <button
-                onClick={() => setActiveTab('expense')}
-                className={`px-3 py-1 rounded ${activeTab === 'expense' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600'}`}
-              >
-                Expense <span className="ml-2 text-xs text-gray-400">({expenseList.length})</span>
-              </button>
-              <button
-                onClick={() => setActiveTab('investment')}
-                className={`px-3 py-1 rounded ${activeTab === 'investment' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600'}`}
-              >
-                Investment <span className="ml-2 text-xs text-gray-400">({investmentList.length})</span>
-              </button>
+        {/* Header - Desktop: Flex Between, Mobile: Flex Column Center */}
+        <div className="flex flex-col md:flex-row items-center md:items-start md:justify-between mb-6 gap-4 md:gap-0">
+          {/* Title & Description - Mobile: Center, Desktop: Left */}
+          <div className="flex flex-col items-center md:items-start text-center md:text-left">
+            <div className="flex items-center gap-2 mb-2">
+              <List className="w-5 h-5 text-gray-600" />
+              <h3 className="text-gray-900">Transactions</h3>
             </div>
+            <p className="text-gray-500 text-sm">Filtered by type — Income, Expense, Investment</p>
+          </div>
+
+          {/* Tabs - Desktop: Right, Mobile: Centered */}
+          <div className="inline-flex rounded-md bg-gray-100 p-1">
+            <button
+              onClick={() => setActiveTab('income')}
+              className={`px-3 py-1 rounded ${activeTab === 'income' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600'}`}
+            >
+              Income <span className="ml-2 text-xs text-gray-400">({incomeList.length})</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('expense')}
+              className={`px-3 py-1 rounded ${activeTab === 'expense' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600'}`}
+            >
+              Expense <span className="ml-2 text-xs text-gray-400">({expenseList.length})</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('investment')}
+              className={`px-3 py-1 rounded ${activeTab === 'investment' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600'}`}
+            >
+              Investment <span className="ml-2 text-xs text-gray-400">({investmentList.length})</span>
+            </button>
           </div>
         </div>
       </div>

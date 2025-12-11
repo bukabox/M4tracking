@@ -247,8 +247,10 @@
   color: #64748b;
 }
 
-.dark input:focus {
-  border-color: #3b82f6;
+.dark input:focus,
+.dark input:focus-visible {
+  background-color: #0f1419 !important;
+  border-color: #3b82f6 !important;
   outline: none;
   ring: 2px;
   ring-color: #3b82f6;
@@ -332,31 +334,53 @@
     @apply bg-background text-foreground;
   }
 
+  /* Global smooth transitions for interactive elements */
+  button,
+  a,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  input,
+  select,
+  textarea {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Smooth scale transform on hover for buttons */
+  button:active:not(:disabled),
+  [role="button"]:active {
+    transform: scale(0.98);
+  }
+
   /* Accordion animations */
   @keyframes accordion-down {
     from {
       height: 0;
+      opacity: 0;
     }
     to {
       height: var(--radix-accordion-content-height);
+      opacity: 1;
     }
   }
 
   @keyframes accordion-up {
     from {
       height: var(--radix-accordion-content-height);
+      opacity: 1;
     }
     to {
       height: 0;
+      opacity: 0;
     }
   }
 
   .animate-accordion-down {
-    animation: accordion-down 0.2s ease-out;
+    animation: accordion-down 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .animate-accordion-up {
-    animation: accordion-up 0.2s ease-out;
+    animation: accordion-up 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   /* Sheet slide animations */
@@ -414,11 +438,11 @@
   }
 
   .fade-in-0 {
-    animation: fade-in 0.2s ease-in-out;
+    animation: fade-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .fade-out-0 {
-    animation: fade-out 0.2s ease-in-out;
+    animation: fade-out 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   /* Slide animation utilities for data-state */

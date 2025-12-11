@@ -2,7 +2,7 @@
 // Monthly accordion report — groups transactions by month and shows details per-month in an Accordion.
 // Redesigned to match BUKABOX M4 Tracker main design system
 
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, forwardRef, useImperativeHandle } from 'react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from './ui/accordion';
@@ -75,6 +75,12 @@ interface Transaction {
 
 interface ReportProps {
   transactions?: Transaction[];
+  projectName?: string;
+}
+
+export interface ReportRef {
+  exportYearlyPDF: () => void;
+  exportMonthlyPDF: () => void;
 }
 
 const fmtIDR = (v: number) => {
@@ -106,12 +112,25 @@ function monthLabel(yyyy_mm: string) {
   return dt.toLocaleString('id-ID', { month: 'long', year: 'numeric' });
 }
 
-export default function Report({ transactions = [] }: ReportProps) {
+const Report = forwardRef<ReportRef, ReportProps>(({ transactions = [], projectName = 'M4 Tracking' }, ref) => {
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const reportRef = useRef<HTMLDivElement | null>(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [exportMode, setExportMode] = useState<'yearly' | 'monthly'>('yearly');
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isDesktop, setIsDesktop] = useState<boolean>(
+    typeof window !== 'undefined' && window.innerWidth >= 768
+  );
+
+  // Track screen size for responsive behavior
+  React.useEffect(() => {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth >= 768);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Filter transactions by selected year
   const yearTransactions = useMemo(() => {
@@ -348,7 +367,7 @@ export default function Report({ transactions = [] }: ReportProps) {
     
     doc.setTextColor(...hexToRgb(PDF_COLORS.textWhite));
     doc.setFontSize(20);
-    doc.text('Annual Financial Report', 25, 13);
+    doc.text(`${projectName} - Annual Report`, 25, 13);
     
     doc.setFontSize(11);
     doc.setTextColor(...hexToRgb(PDF_COLORS.textMuted));
@@ -371,29 +390,25 @@ export default function Report({ transactions = [] }: ReportProps) {
         label: 'Total Income', 
         value: fmtIDR(yearTotals.income), 
         bgColor: PDF_COLORS.bgSecondary,
-        accentColor: PDF_COLORS.income,
-        icon: '↑'
+        accentColor: PDF_COLORS.income
       },
       { 
         label: 'Total Expense', 
         value: fmtIDR(yearTotals.expense), 
         bgColor: PDF_COLORS.bgSecondary,
-        accentColor: PDF_COLORS.expense,
-        icon: '↓'
+        accentColor: PDF_COLORS.expense
       },
       { 
         label: 'Investment', 
         value: fmtIDR(yearTotals.investment), 
         bgColor: PDF_COLORS.bgSecondary,
-        accentColor: PDF_COLORS.investment,
-        icon: '■'
+        accentColor: PDF_COLORS.investment
       },
       { 
         label: 'Net Profit', 
         value: fmtIDR(yearTotals.net), 
         bgColor: PDF_COLORS.bgSecondary,
-        accentColor: yearTotals.net >= 0 ? PDF_COLORS.net : PDF_COLORS.expense,
-        icon: yearTotals.net >= 0 ? '✓' : '✗'
+        accentColor: yearTotals.net >= 0 ? PDF_COLORS.net : PDF_COLORS.expense
       }
     ];
 
@@ -418,11 +433,6 @@ export default function Report({ transactions = [] }: ReportProps) {
       doc.setFontSize(11);
       doc.setTextColor(...hexToRgb(PDF_COLORS.textPrimary));
       doc.text(card.value, cardX + 8, cardY + 16);
-      
-      // Icon
-      doc.setFontSize(14);
-      doc.setTextColor(...hexToRgb(card.accentColor));
-      doc.text(card.icon, cardX + 82, cardY + 14, { align: 'right' });
     });
 
     yPos += 60;
@@ -515,20 +525,20 @@ export default function Report({ transactions = [] }: ReportProps) {
     yPos += 10;
 
     // Footer - Professional
-    const footerY = pageHeight - 12;
+    const footerY = pageHeight - 15;
     doc.setDrawColor(...hexToRgb(PDF_COLORS.borderLight));
     doc.setLineWidth(0.3);
     doc.line(14, footerY, pageWidth - 14, footerY);
     
     doc.setFontSize(7);
     doc.setTextColor(...hexToRgb(PDF_COLORS.textMuted));
-    doc.text('BUKABOX M4 Tracker Financial Report', 14, footerY + 5);
+    doc.text(`${projectName} Financial Report`, 14, footerY + 5);
     doc.text(`Page 1 of 1`, pageWidth - 14, footerY + 5, { align: 'right' });
     
     doc.setFontSize(6);
-    doc.text(`© ${new Date().getFullYear()} BUKABOX M4 Tracker. All rights reserved.`, pageWidth / 2, footerY + 8, { align: 'center' });
+    doc.text(`© ${new Date().getFullYear()} BUKABOX M4 Tracking system. All rights reserved.`, pageWidth / 2, footerY + 8, { align: 'center' });
 
-    doc.save(`BUKABOX M4 Tracker-Annual-Report-${year}.pdf`);
+    doc.save(`${projectName.replace(/\s+/g, '-')}-Annual-Report-${year}.pdf`);
   }
 
   // Generate Monthly PDF Report
@@ -557,7 +567,7 @@ export default function Report({ transactions = [] }: ReportProps) {
       
       doc.setTextColor(...hexToRgb(PDF_COLORS.textWhite));
       doc.setFontSize(18);
-      doc.text('Monthly Financial Report', 25, 13);
+      doc.text(`${projectName} - Monthly Report`, 25, 13);
       
       doc.setFontSize(11);
       doc.setTextColor(...hexToRgb(PDF_COLORS.textMuted));
@@ -587,29 +597,25 @@ export default function Report({ transactions = [] }: ReportProps) {
           label: 'Income', 
           value: fmtIDR(totalIncome), 
           bgColor: PDF_COLORS.bgSecondary,
-          accentColor: PDF_COLORS.income,
-          icon: '↑'
+          accentColor: PDF_COLORS.income
         },
         { 
           label: 'Expense', 
           value: fmtIDR(totalExpense), 
           bgColor: PDF_COLORS.bgSecondary,
-          accentColor: PDF_COLORS.expense,
-          icon: '↓'
+          accentColor: PDF_COLORS.expense
         },
         { 
           label: 'Investment', 
           value: fmtIDR(totalInvest), 
           bgColor: PDF_COLORS.bgSecondary,
-          accentColor: PDF_COLORS.investment,
-          icon: '■'
+          accentColor: PDF_COLORS.investment
         },
         { 
           label: 'Net', 
           value: fmtIDR(monthNet), 
           bgColor: PDF_COLORS.bgSecondary,
-          accentColor: monthNet >= 0 ? PDF_COLORS.net : PDF_COLORS.expense,
-          icon: monthNet >= 0 ? '✓' : '✗'
+          accentColor: monthNet >= 0 ? PDF_COLORS.net : PDF_COLORS.expense
         }
       ];
 
@@ -634,39 +640,44 @@ export default function Report({ transactions = [] }: ReportProps) {
         doc.setFontSize(9);
         doc.setTextColor(...hexToRgb(PDF_COLORS.textPrimary));
         doc.text(card.value, cardX + 8, cardY + 13);
-        
-        // Icon
-        doc.setFontSize(12);
-        doc.setTextColor(...hexToRgb(card.accentColor));
-        doc.text(card.icon, cardX + 82, cardY + 12, { align: 'right' });
       });
 
       yPos += 52;
 
-      // Section: Transaction Details
-      doc.setTextColor(...hexToRgb(PDF_COLORS.primary));
-      doc.setFontSize(11);
-      doc.text(`Transaction Details (${txs.length} transactions)`, 14, yPos);
-      yPos += 8;
-
-      // Table Header
-      doc.setFillColor(...hexToRgb(PDF_COLORS.bgDark));
-      doc.roundedRect(14, yPos, 182, 6, 1, 1, 'F');
+      // Section: Transaction Details - with space check
+      const footerStartY = pageHeight - 25; // Reserve space for footer
+      const availableSpace = footerStartY - yPos;
+      const rowHeight = 5;
+      const headerHeight = 6;
+      const titleHeight = 10;
+      const maxRows = Math.floor((availableSpace - headerHeight - titleHeight - 15) / rowHeight);
+      const txToShow = Math.min(Math.max(maxRows, 3), txs.length, 22); // Min 3, max 22
       
-      doc.setTextColor(...hexToRgb(PDF_COLORS.textWhite));
-      doc.setFontSize(7);
-      doc.text('Date', 18, yPos + 4);
-      doc.text('Description', 38, yPos + 4);
-      doc.text('Type', 100, yPos + 4);
-      doc.text('Category', 125, yPos + 4);
-      doc.text('Amount', 193, yPos + 4, { align: 'right' });
-      
-      yPos += 6;
+      // Only show table if we have space
+      if (txToShow >= 3 && availableSpace > 40) {
+        doc.setTextColor(...hexToRgb(PDF_COLORS.primary));
+        doc.setFontSize(11);
+        doc.text(`Transaction Details (${txs.length} transactions)`, 14, yPos);
+        yPos += 8;
 
-      const startY = yPos;
+        // Table Header
+        doc.setFillColor(...hexToRgb(PDF_COLORS.bgDark));
+        doc.roundedRect(14, yPos, 182, 6, 1, 1, 'F');
+        
+        doc.setTextColor(...hexToRgb(PDF_COLORS.textWhite));
+        doc.setFontSize(7);
+        doc.text('Date', 18, yPos + 4);
+        doc.text('Description', 38, yPos + 4);
+        doc.text('Type', 100, yPos + 4);
+        doc.text('Category', 125, yPos + 4);
+        doc.text('Amount', 193, yPos + 4, { align: 'right' });
+        
+        yPos += 6;
 
-      // Table Body - show max 22 transactions per page
-      txs.slice(0, 22).forEach((t, idx) => {
+        const startY = yPos;
+
+        // Table Body - show calculated amount
+        txs.slice(0, txToShow).forEach((t, idx) => {
         const dateStr = new Date(t.date).toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
         const typeLabel = t.type === 'income' ? 'Income' : t.type === 'expense' ? 'Expense' : 'Invest';
         const amountStr = (t.type === 'income' ? '+' : '-') + fmtIDR(Math.abs(t.amount));
@@ -701,38 +712,45 @@ export default function Report({ transactions = [] }: ReportProps) {
         doc.text(amountStr, 193, yPos + 3.5, { align: 'right' });
         
         yPos += 5;
-      });
+        });
 
-      // Table Border
-      const tableHeight = Math.min(txs.length, 22) * 5;
-      doc.setDrawColor(...hexToRgb(PDF_COLORS.border));
-      doc.setLineWidth(0.3);
-      doc.roundedRect(14, startY, 182, tableHeight, 1, 1, 'S');
+        // Table Border
+        const tableHeight = txToShow * 5;
+        doc.setDrawColor(...hexToRgb(PDF_COLORS.border));
+        doc.setLineWidth(0.3);
+        doc.roundedRect(14, startY, 182, tableHeight, 1, 1, 'S');
 
-      // If more than 22 transactions, show note
-      if (txs.length > 22) {
-        yPos += 3;
-        doc.setFontSize(6);
-        doc.setTextColor(...hexToRgb(PDF_COLORS.textMuted));
-        doc.text(`Showing first 22 of ${txs.length} transactions`, 14, yPos);
+        // If more transactions, show note
+        if (txs.length > txToShow) {
+          yPos += 3;
+          doc.setFontSize(6);
+          doc.setTextColor(...hexToRgb(PDF_COLORS.textMuted));
+          doc.text(`Showing first ${txToShow} of ${txs.length} transactions`, 14, yPos);
+          yPos += 5;
+        } else {
+          yPos += 5;
+        }
       }
 
+      // Ensure minimum spacing before footer
+      yPos = Math.max(yPos, footerStartY);
+
       // Footer
-      const footerY = pageHeight - 12;
+      const footerY = pageHeight - 15;
       doc.setDrawColor(...hexToRgb(PDF_COLORS.borderLight));
       doc.setLineWidth(0.3);
       doc.line(14, footerY, pageWidth - 14, footerY);
       
       doc.setFontSize(7);
       doc.setTextColor(...hexToRgb(PDF_COLORS.textMuted));
-      doc.text('BUKABOX M4 Tracker Monthly Report', 14, footerY + 5);
+      doc.text(`${projectName} Monthly Report`, 14, footerY + 5);
       doc.text(`Page ${pageNum} of ${grouped.length}`, pageWidth - 14, footerY + 5, { align: 'right' });
       
       doc.setFontSize(6);
-      doc.text(`© ${new Date().getFullYear()} BUKABOX M4 Tracker. All rights reserved.`, pageWidth / 2, footerY + 8, { align: 'center' });
+      doc.text(`© ${new Date().getFullYear()} BUKABOX M4 Tracking system. All rights reserved.`, pageWidth / 2, footerY + 8, { align: 'center' });
     });
 
-    doc.save(`BUKABOX M4 Tracker-Monthly-Report-${year}.pdf`);
+    doc.save(`${projectName.replace(/\s+/g, '-')}-Monthly-Report-${year}.pdf`);
   }
 
   async function exportPdf(mode: 'yearly' | 'monthly') {
@@ -752,6 +770,16 @@ export default function Report({ transactions = [] }: ReportProps) {
     setLoadingPdf(false);
   }
 
+  // Expose export functions to parent component via ref
+  useImperativeHandle(ref, () => ({
+    exportYearlyPDF: () => {
+      generateYearlyPDF();
+    },
+    exportMonthlyPDF: () => {
+      generateMonthlyPDF();
+    }
+  }));
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header */}
@@ -760,7 +788,7 @@ export default function Report({ transactions = [] }: ReportProps) {
           <h2 className="text-gray-900 dark:text-gray-100">Annual Report</h2>
           <p className="text-gray-500">Comprehensive financial overview for {year}</p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', position: 'relative' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'no-wrap', position: 'relative' }}>
           <Button variant="outline" onClick={() => setYear(y => y - 1)}>
             Previous Year
           </Button>
@@ -809,71 +837,12 @@ export default function Report({ transactions = [] }: ReportProps) {
       </div>
 
       <div ref={reportRef} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        {/* Year Summary Cards */}
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-          gap: '1rem'
-        }}>
-          <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-white" />
-              </div>
-              <Badge className="bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300">
-                Income
-              </Badge>
-            </div>
-            <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">Total Revenue</p>
-            <p className="text-gray-900 dark:text-gray-100 text-2xl">{fmtIDR(yearTotals.income)}</p>
-          </Card>
-
-          <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-full bg-red-500 flex items-center justify-center">
-                <TrendingDown className="w-6 h-6 text-white" />
-              </div>
-              <Badge className="bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300">
-                Expense
-              </Badge>
-            </div>
-            <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">Total Expenses</p>
-            <p className="text-gray-900 dark:text-gray-100 text-2xl">{fmtIDR(yearTotals.expense)}</p>
-          </Card>
-
-          <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-full bg-orange-500 flex items-center justify-center">
-                <BarChart3 className="w-6 h-6 text-white" />
-              </div>
-              <Badge className="bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300">
-                Investment
-              </Badge>
-            </div>
-            <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">Total Investment</p>
-            <p className="text-gray-900 dark:text-gray-100 text-2xl">{fmtIDR(yearTotals.investment)}</p>
-          </Card>
-
-          <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between mb-4">
-              <div className={`w-12 h-12 rounded-full ${yearTotals.net >= 0 ? 'bg-purple-500' : 'bg-gray-500'} flex items-center justify-center`}>
-                <DollarSign className="w-6 h-6 text-white" />
-              </div>
-              <Badge className={yearTotals.net >= 0 ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}>
-                Net
-              </Badge>
-            </div>
-            <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">Net Profit</p>
-            <p className={`text-2xl ${yearTotals.net >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-              {fmtIDR(yearTotals.net)}
-            </p>
-          </Card>
-        </div>
+        {/* Year Summary Cards moved to App.tsx - shows above tabs when Report tab is active */}
 
         {/* Charts Section */}
         <div style={{ 
           display: 'grid',
-          gridTemplateColumns: window.innerWidth >= 1024 ? '2fr 1fr' : '1fr',
+          gridTemplateColumns: isDesktop ? '2fr 1fr' : '1fr',
           gap: '1.5rem'
         }}>
           {/* Trend Chart */}
@@ -955,8 +924,8 @@ export default function Report({ transactions = [] }: ReportProps) {
         </div>
 
         {/* Monthly Breakdown Accordion */}
-        <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-6">
+        <Card className={`bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 ${isDesktop ? 'p-6' : 'p-0'}`}>
+          <div className={`flex items-center gap-2 ${isDesktop ? 'mb-6' : 'mb-0 p-6 pb-0'}`}>
             <Calendar className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             <h3 className="text-gray-900 dark:text-gray-100">Monthly Breakdown</h3>
           </div>
@@ -966,7 +935,7 @@ export default function Report({ transactions = [] }: ReportProps) {
               No transactions for {year}
             </div>
           ) : (
-            <Accordion type="single" collapsible className="space-y-3">
+            <Accordion type="single" collapsible className={isDesktop ? 'space-y-3' : 'space-y-3 p-6 pt-3'}>
               {grouped.map(({ key, txs }) => {
                 const totalIncome = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
                 const totalExpense = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
@@ -977,10 +946,10 @@ export default function Report({ transactions = [] }: ReportProps) {
                   <AccordionItem 
                     key={key} 
                     value={key}
-                    className="border border-gray-200 dark:border-gray-600 rounded-xl overflow-hidden"
+                    className={isDesktop ? 'border border-gray-200 dark:border-gray-600 rounded-xl overflow-hidden' : 'border-0 rounded-none overflow-hidden'}
                   >
                     <AccordionTrigger className="hover:no-underline px-5 py-4 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                      <div className="flex items-center justify-between w-full pr-2">
+                      <div className={`w-full ${isDesktop ? 'flex items-center justify-between pr-2' : 'flex flex-col gap-3'}`}>
                         <div className="flex items-center gap-4">
                           <div className="w-12 h-12 rounded-full bg-blue-500 dark:bg-blue-600 flex items-center justify-center">
                             <Calendar className="w-6 h-6 text-white" />
@@ -990,7 +959,7 @@ export default function Report({ transactions = [] }: ReportProps) {
                             <p className="text-gray-500 dark:text-gray-400 text-sm">{txs.length} transactions</p>
                           </div>
                         </div>
-                        <div className="text-right">
+                        <div className={isDesktop ? 'text-right' : 'text-left pl-16'}>
                           <span className="text-gray-500 dark:text-gray-400 text-sm">Net Total</span>
                           <span className={`font-semibold ${monthTotal >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                             {monthTotal >= 0 ? '+' : ''}{fmtIDR(monthTotal)}
@@ -999,7 +968,7 @@ export default function Report({ transactions = [] }: ReportProps) {
                       </div>
                     </AccordionTrigger>
 
-                    <AccordionContent style={{ paddingTop: '1rem', paddingBottom: '1rem', paddingLeft: '1.25rem', paddingRight: '1.25rem' }}>
+                    <AccordionContent style={isDesktop ? { paddingTop: '1rem', paddingBottom: '1rem', paddingLeft: '1.25rem', paddingRight: '1.25rem' } : {}}>
                       <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg" style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                         {/* Month Summary */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem' }}>
@@ -1033,7 +1002,7 @@ export default function Report({ transactions = [] }: ReportProps) {
                         </div>
 
                         {/* Transactions Table */}
-                        <div className="bg-white dark:bg-gray-700/30 rounded-lg overflow-hidden" style={{ border: '1px solid #d1d5db' }}>
+                        <div className="bg-white dark:bg-gray-700/30 rounded-lg overflow-hidden border border-gray-300 dark:border-[#212730ff]">
                           <div className="overflow-x-auto">
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                               <thead className="bg-gray-50 dark:bg-gray-800">
@@ -1047,7 +1016,7 @@ export default function Report({ transactions = [] }: ReportProps) {
                               </thead>
                               <tbody className="bg-white dark:bg-gray-800/50">
                                 {txs.map((t, idx) => (
-                                  <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50" style={{ borderBottom: idx < txs.length - 1 ? '1px solid #d1d5db' : 'none' }}>
+                                  <tr key={t.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 ${idx < txs.length - 1 ? 'border-b border-gray-300 dark:border-[#212730ff]' : ''}`}>
                                     <td className="text-sm text-gray-600 dark:text-gray-400" style={{ padding: '0.75rem 1rem' }}>
                                       {new Date(t.date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}
                                     </td>
@@ -1099,10 +1068,14 @@ export default function Report({ transactions = [] }: ReportProps) {
         <div className="text-center text-sm text-gray-500 pt-4 border-t border-gray-200">
           <div className="flex items-center justify-center gap-2">
             <FileText className="w-4 h-4" />
-            <span>Generated by BUKABOX • {new Date().toLocaleDateString('id-ID')}</span>
+            <span>{projectName} • {new Date().toLocaleDateString('id-ID')} • BUKABOX</span>
           </div>
         </div>
       </div>
     </div>
   );
-}
+});
+
+Report.displayName = 'Report';
+
+export default Report;

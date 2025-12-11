@@ -2,8 +2,6 @@
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { Card } from "./ui/card";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./ui/accordion";
-import { Badge } from "./ui/badge";
-import { RefreshCw } from "lucide-react";
 
 /**
  * InvestmentCrypto.tsx (patched)
@@ -59,12 +57,19 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
     try {
       const res = await fetch("/api/crypto_holdings");
       if (!res.ok) throw new Error(`holdings fetch failed ${res.status}`);
+      
+      // Check if response is JSON
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Response is not JSON');
+      }
+      
       const j = await res.json();
       const arr = Array.isArray(j?.holdings) ? j.holdings : (Array.isArray(j) ? j : []);
       setHoldings(arr);
       return arr;
     } catch (e) {
-      console.warn("loadHoldings failed", e);
+      // Silently fail - backend not available
       setHoldings([]);
       return [];
     }
@@ -74,6 +79,13 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
     try {
       const res = await fetch("/api/transactions");
       if (!res.ok) throw new Error(`transactions fetch failed ${res.status}`);
+      
+      // Check if response is JSON
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Response is not JSON');
+      }
+      
       const j = await res.json();
       const arr = Array.isArray(j) ? j : (Array.isArray(j?.transactions) ? j.transactions : []);
       // normalize: ensure date strings and sort desc by date (newest first)
@@ -92,7 +104,7 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
       setTransactions(normalized);
       return normalized;
     } catch (e) {
-      console.warn("loadTransactions failed", e);
+      // Silently fail - backend not available
       setTransactions([]);
       return [];
     }
@@ -103,6 +115,13 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
     try {
       const res = await fetch("/api/crypto_prices?vs_currency=idr&symbols=btc");
       if (!res.ok) throw new Error("internal price fetch failed");
+      
+      // Check if response is JSON
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        return null;
+      }
+      
       const j = await res.json();
       const candidate = (j && (j["btc"] ?? j["BTC"])) ?? j ?? {};
       const idr = (candidate && (candidate["idr"] ?? candidate["IDR"] ?? candidate["price_idr"])) ?? (j && j["price_idr"]) ?? null;
@@ -358,50 +377,16 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
 
   return (
     <Card className="p-6 bg-white border-gray-200">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h3 className="text-gray-900 mb-1">Bitcoin Accumulation</h3>
-          <p className="text-gray-500 text-sm">BTC holdings and buy history (lifetime)</p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Badge className={
-            priceSource === "internal"
-              ? "bg-blue-100 text-blue-700"
-              : priceSource === "coingecko"
-                ? "bg-emerald-100 text-emerald-700"
-                : "bg-gray-200 text-gray-600"
-          }>
-            {priceSource === "internal" ? "Internal API" : priceSource === "coingecko" ? "CoinGecko" : "No Price"}
-          </Badge>
-
-          <button
-            onClick={manualRefresh}
-            className="flex items-center gap-2 text-xs px-3 py-1 border rounded-md hover:bg-gray-100"
-            aria-label="Refresh price"
-            title="Refresh price"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin text-blue-600" : "text-gray-600"}`} />
-            Refresh Price
-          </button>
-        </div>
+      <div className="mb-4">
+        <h3 className="text-gray-900 mb-1">Bitcoin Transaction</h3>
+        <p className="text-gray-500 text-sm">BTC holdings and buy history (lifetime)</p>
       </div>
 
-      {/* Top summary: 2-row format */}
+      {/* Top summary: Show only Initial (total invested) */}
       <div className="mb-4 border rounded-lg p-4 bg-gray-50">
         <div className="flex items-center justify-between">
-          <div className="left-block">
-            <div className="text-lg font-semibold">{fmtNumber(totalBtc, 8)} BTC</div>
-            <div className="text-xs">Initial : {formatRp(totalInvestedIdr)}</div>
-          </div>
-
-          <div className="text-right">
-            <div className="text-lg font-semibold">{formatRp(currentValueIdr)}</div>
-            <div className={`text-sm ${totalPnLIdr >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {formatRp(totalPnLIdr)}{ totalPnLPercent != null ? ` (${totalPnLPercent >= 0 ? '+' : ''}${totalPnLPercent.toFixed(1)}%)` : '' }
-            </div>
-            
-          </div>
+          <div className="text-sm text-gray-600">Initial Investment</div>
+          <div className="font-semibold">{formatRp(totalInvestedIdr)}</div>
         </div>
       </div>
 
@@ -418,8 +403,8 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
                   <AccordionTrigger className="hover:no-underline py-0">
                     <div className="flex items-center justify-between w-full">
                       <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded-full flex items-center justify-center bg-yellow-500 text-white">
-                          <img src="https://www.svgrepo.com/show/303287/bitcoin-logo.svg" alt="BTC" className="w-6 h-6" />
+                        <div className="w-12 h-12 rounded-full flex items-center justify-center bg-[#f7921a] text-white">
+                          <img src="https://www.svgrepo.com/show/303287/bitcoin-logo.svg" alt="BTC" className="w-8 h-8" />
                         </div>
                         <div className="text-left">
                           <p className="text-gray-900">{it.date ? `Buy — ${new Date(it.date).toLocaleDateString('id-ID')}` : 'Holding (aggregated)'}</p>

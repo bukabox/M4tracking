@@ -1,18 +1,17 @@
-// /mnt/data/PortfolioChart.tsx
-import { useEffect, useMemo, useState } from "react";
+// /components/PortfolioChart-lokal.tsx - Compact version for MetricCard slot (Props-based)
+import { useMemo } from "react";
 import { Card } from './ui/card';
 import {
   ResponsiveContainer,
   LineChart,
   Line,
-  CartesianGrid,
   XAxis,
   YAxis,
-  Tooltip,
-  Legend
+  Tooltip
 } from 'recharts';
+import { BarChart3 } from 'lucide-react';
 
-type Tx = {
+type Transaction = {
   id: string;
   type: string;
   date: string;
@@ -20,7 +19,12 @@ type Tx = {
   stream?: string;
   amount: number;
   note?: string;
+  label?: string;
 };
+
+interface PortfolioChartProps {
+  transactions: Transaction[];
+}
 
 // brand colors requested (normalized keys are uppercased)
 const STREAM_COLORS: Record<string, string> = {
@@ -55,56 +59,21 @@ function yearMonths(year?: number) {
   return arr;
 }
 
-export function PortfolioChart() {
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [transactions, setTransactions] = useState<Tx[]>([]);
-  // fix chart year to current year
+export function PortfolioChart({ transactions }: PortfolioChartProps) {
   const currentYear = new Date().getFullYear();
   const months = useMemo(() => yearMonths(currentYear), [currentYear]);
-
-  useEffect(() => {
-    let mounted = true;
-    const fetchTx = async () => {
-      setLoading(true);
-      setErr(null);
-      try {
-        const res = await fetch('/api/transactions');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const j = await res.json();
-        if (!mounted) return;
-        const mapped: Tx[] = (j || []).map((t: any) => ({
-          id: String(t.id),
-          type: String(t.type || '').toLowerCase(),
-          date: t.date || t.datetime || '',
-          category: t.category ?? t.label ?? '',
-          stream: (t.stream ?? '').toString(),
-          amount: Number(t.amount ?? t.amount_idr ?? 0),
-          note: t.note ?? '',
-        }));
-        setTransactions(mapped);
-      } catch (e: any) {
-        if (mounted) setErr(String(e?.message ?? e));
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-
-    fetchTx();
-    const iv = setInterval(fetchTx, 60_000);
-    return () => { mounted = false; clearInterval(iv); };
-  }, []);
 
   // build per-stream series (months fixed Jan..Dec)
   const { chartData, streams } = useMemo(() => {
     const monthKeys = months.map(m => m.key); // YYYY-MM for Jan..Dec
     const streamMap: Record<string, Record<string, number>> = {};
 
-    // initialize zero values so each stream has entries for all months
+    // Process transactions
     transactions.forEach(tx => {
       if ((tx.type || '').toLowerCase() !== 'income') return;
       const stream = (tx.stream || '').trim();
       if (!stream) return;
+      
       // parse month key from tx.date
       let dt = new Date(tx.date);
       if (isNaN(dt.getTime())) {
@@ -125,7 +94,6 @@ export function PortfolioChart() {
       return sb - sa;
     });
 
-    // ensure streams that had no transactions still don't appear.
     const rows = months.map(m => {
       const row: Record<string, any> = { month: m.label, key: m.key };
       streamList.forEach(s => {
@@ -151,88 +119,120 @@ export function PortfolioChart() {
     return out;
   }, [streams]);
 
-  if (loading) {
-    return (
-      <Card className="p-6 bg-white border-gray-200">
-        <div className="mb-6">
-          <h3 className="text-gray-900 mb-1">Revenue Performance</h3>
-          <p className="text-gray-500 text-sm">Income by stream (yearly)</p>
-        </div>
-        <div className="py-16 text-center text-gray-500">Loading chart…</div>
-      </Card>
-    );
-  }
+  // Calculate month-over-month change
+  const changeData = useMemo(() => {
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMonthKey = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
 
-  if (err) {
-    return (
-      <Card className="p-6 bg-white border-gray-200">
-        <div className="mb-6">
-          <h3 className="text-gray-900 mb-1">Revenue Performance</h3>
-          <p className="text-gray-500 text-sm">Income by stream (yearly)</p>
-        </div>
-        <div className="py-16 text-center text-red-600">Error loading chart: {err}</div>
-      </Card>
-    );
-  }
+    const currentRow = chartData.find(r => r.key === currentMonthKey);
+    const prevRow = chartData.find(r => r.key === prevMonthKey);
 
+    if (!currentRow || !prevRow) {
+      return { text: 'N/A', type: 'neutral' as const };
+    }
+
+    // Sum all streams for both months
+    const currentTotal = streams.reduce((sum, s) => sum + (currentRow[s] || 0), 0);
+    const prevTotal = streams.reduce((sum, s) => sum + (prevRow[s] || 0), 0);
+
+    if (prevTotal === 0) {
+      if (currentTotal > 0) return { text: '+100%', type: 'positive' as const };
+      return { text: '0%', type: 'neutral' as const };
+    }
+
+    const change = ((currentTotal - prevTotal) / prevTotal) * 100;
+    const sign = change >= 0 ? '+' : '';
+    return {
+      text: `${sign}${change.toFixed(1)}%`,
+      type: change >= 0 ? 'positive' as const : 'negative' as const
+    };
+  }, [chartData, streams]);
+
+  // No data state
   if (chartData.length === 0 || streams.length === 0) {
     return (
-      <Card className="p-6 bg-white border-gray-200">
-        <div className="mb-6">
-          <h3 className="text-gray-900 mb-1">Revenue Performance</h3>
-          <p className="text-gray-500 text-sm">Income by stream — {currentYear}</p>
+      <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 h-full flex flex-col">
+        <div className="flex items-start justify-between">
+          <div className="w-12 h-12 bg-gray-500 rounded-xl flex items-center justify-center text-white">
+            <BarChart3 className="w-5 h-5" />
+          </div>
         </div>
-        <div className="py-16 text-center text-gray-500">No income-with-stream data available for this year.</div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center text-gray-500 dark:text-gray-400 text-sm">No stream data</div>
+        </div>
       </Card>
     );
   }
 
   return (
-    <Card className="p-6 bg-white border-gray-200">
-      <div className="mb-6">
-        <h3 className="text-gray-900 mb-1">Revenue Performance</h3>
-        <p className="text-gray-500 text-sm">Income by stream — {currentYear}</p>
+    <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 h-full flex flex-col">
+      {/* Header with icon and percentage badge like MetricCard */}
+      <div className="flex items-start justify-between">
+        <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white ${
+          changeData.type === 'positive' 
+            ? 'bg-green-500' 
+            : changeData.type === 'negative'
+            ? 'bg-red-500'
+            : 'bg-gray-500'
+        }`}>
+          <BarChart3 className="w-5 h-5" />
+        </div>
+        <span className={`px-2 py-1 rounded text-sm ${
+          changeData.type === 'positive' 
+            ? 'bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400' 
+            : changeData.type === 'negative'
+            ? 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400'
+            : 'bg-gray-50 dark:bg-gray-900/30 text-gray-600 dark:text-gray-400'
+        }`}>
+          {changeData.text}
+        </span>
       </div>
 
-      <div className="flex items-center gap-4 mb-4 flex-wrap">
-        {streams.map((s) => (
-          <div key={s} className="flex items-center gap-2 mr-4">
-            <div style={{ width: 10, height: 10, background: streamColors[s] }} />
-            <span className="text-sm text-gray-600">{s}</span>
-          </div>
-        ))}
-      </div>
-
-      <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={chartData} margin={{ top: 6, right: 16, left: 0, bottom: 6 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-          <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} />
-          <YAxis axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} tickFormatter={(v) => {
-            if (Math.abs(Number(v)) >= 1000) return `${Math.round(Number(v)/1000)}k`;
-            return `${v}`;
-          }} />
-          <Tooltip
-            formatter={(value: number, name: string) => [`Rp ${Number(value).toLocaleString('id-ID')}`, String(name)]}
-            contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12 }}
-          />
-          <Legend />
-
-          {/* Per-stream lines */}
-          {streams.map((s) => (
-            <Line
-              key={s}
-              type="monotone"
-              dataKey={s}
-              stroke={streamColors[s]}
-              strokeWidth={2}
-              dot={{ r: 2 }}
-              activeDot={{ r: 4 }}
-              connectNulls={true}
+      {/* Chart Area - with min-height to ensure visibility */}
+      <div className="flex-1 min-h-[100px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+            <XAxis 
+              dataKey="month" 
+              axisLine={false} 
+              tickLine={false} 
+              tick={{ fill: '#9ca3af', fontSize: 10 }} 
+              interval="preserveStartEnd"
             />
-          ))}
+            <YAxis 
+              axisLine={false} 
+              tickLine={false} 
+              tick={{ fill: '#9ca3af', fontSize: 10 }} 
+              tickFormatter={(v) => {
+                if (Math.abs(Number(v)) >= 1000000) return `${Math.round(Number(v)/1000000)}M`;
+                if (Math.abs(Number(v)) >= 1000) return `${Math.round(Number(v)/1000)}k`;
+                return `${v}`;
+              }} 
+            />
+            <Tooltip
+              formatter={(value: number, name: string) => [`Rp ${Number(value).toLocaleString('id-ID')}`, String(name)]}
+              contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 11 }}
+            />
 
-        </LineChart>
-      </ResponsiveContainer>
+            {/* Per-stream lines */}
+            {streams.map((s) => (
+              <Line
+                key={s}
+                type="monotone"
+                dataKey={s}
+                stroke={streamColors[s]}
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 3 }}
+                connectNulls={true}
+              />
+            ))}
+
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     </Card>
   );
 }

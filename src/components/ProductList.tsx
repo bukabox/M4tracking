@@ -9,7 +9,8 @@ import {
   ArrowUp,
   ArrowDown,
   FileText,
-  Search
+  Search,
+  Package
 } from 'lucide-react';
 
 interface ProductData {
@@ -149,17 +150,49 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
 
   // Use localTx instead of transactions so component updates by itself
   const entriesByProduct = useMemo(() => {
+    // Build mapping product_id -> product normalized name (norm)
+    const idToNorm = new Map<string, string>();
+    const productMapById = new Map<string, any>();
+    for (const p of products) {
+      const pid = String((p as any).product_id ?? p.id ?? "").trim();
+      if (pid) {
+        idToNorm.set(pid, normalize(p.name));
+        productMapById.set(pid, p);
+      }
+    }
+
+    // create map with keys = normalized product name, but index by product_id so grouping is stable
     const map = new Map<string, Tx[]>();
+    // initialize keys for known products so empty groups show
+    for (const p of products) {
+      const norm = normalize(p.name);
+      if (!map.has(norm)) map.set(norm, []);
+    }
+
     for (const tx of localTx) {
-      const key = normalize(tx.label || tx.category || "Unknown Product");
+      // prefer product_id if present and maps to a known product
+      const pid = String((tx as any).product_id ?? "").trim();
+      let key: string | null = null;
+      if (pid && idToNorm.has(pid)) {
+        key = idToNorm.get(pid)!;
+      } else {
+        // fallback to normalized label/category
+        key = normalize(tx.label || tx.category || "Unknown Product");
+      }
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(tx);
     }
+
+    // sort each product's transactions by date desc
     for (const [k, arr] of map.entries()) {
-      arr.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+      arr.sort((a, b) => {
+        const ta = new Date(a.date || 0).getTime();
+        const tb = new Date(b.date || 0).getTime();
+        return tb - ta;
+      });
     }
     return map;
-  }, [localTx]);
+  }, [localTx, products]);
 
   // Recompute revenue per product from local transactions (only income type)
   const revenueByProduct = useMemo(() => {
@@ -208,12 +241,15 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
 
   return (
     <Card className="p-6 bg-white border-gray-200" ref={ref}>
-      <div className="flex gap-4 justify-between">
-        <div className="mb-2">
-          <h3 className="text-gray-900 mb-1">Sticker</h3>
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-2">
+          <Package className="w-5 h-5 text-gray-600" />
+          <h3 className="text-gray-900">Products</h3>
         </div>
-
-        <div className="mb-4 flex items-center gap-4">
+      </div>
+      
+      <div className="flex gap-4 justify-between mb-4">
+        <div className="flex items-center gap-4 flex-1">
           <div className="relative w-full max-w-sm">
             <Input
               placeholder="Search..."
@@ -279,6 +315,17 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
                               }
                             }
 
+                            // fallback: prefer product.url_id (explicit store id) then product.product_id / p.id
+                            if (!finalThumbUrl) {
+                              const productCandidate = (p as any);
+                              const urlId = (productCandidate.url_id || productCandidate.store_id || productCandidate.line_store_id || "").toString().trim();
+                              const candidate = urlId || (productCandidate.product_id || productCandidate.id || "").toString().trim();
+                              if (candidate && /^[0-9]{4,}$/.test(candidate)) {
+                                sid = candidate;
+                                finalThumbUrl = makeStaticUrl(candidate);
+                              }
+                            }
+
                             return finalThumbUrl ? (
                               <img
                                 src={finalThumbUrl}
@@ -326,14 +373,14 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
                   </AccordionTrigger>
 
                   <AccordionContent className="pt-4">
-                    <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+                    <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
                       <div className="flex items-center gap-2 mb-4">
-                        <FileText className="w-4 h-4 text-blue-600" />
-                        <span className="text-gray-900">Product Transactions</span>
+                        <FileText className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                        <span className="text-gray-900 dark:text-gray-100">Product Transactions</span>
                       </div>
 
                       {entries.length === 0 ? (
-                        <div className="text-sm text-gray-500">No transactions for this product.</div>
+                        <div className="text-sm text-gray-500 dark:text-gray-400">No transactions for this product.</div>
                       ) : (
                         <div className="space-y-3">
                           {entries.map((tx) => {
@@ -345,7 +392,7 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
                                 <div className="flex items-start justify-between">
                                   <div className="flex items-start gap-3">
 
-                                    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gray-50 text-gray-600">
+                                    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
                                       {thumbUrl ? (
                                         <img
                                           src={thumbUrl}
@@ -375,10 +422,10 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
                                     </div>
 
                                     <div>
-                                      <p className="text-gray-900 font-medium text-left">
+                                      <p className="text-gray-900 dark:text-gray-100 font-medium text-left">
                                         {tx.label || p.name}
                                       </p>
-                                      <div className="text-sm text-gray-500">
+                                      <div className="text-sm text-gray-500 dark:text-gray-400">
                                         <span>{getCategoryName(tx.label, tx.type)}</span>
                                         <span className="mx-2">•</span>
                                         <span>{formatDate(tx.date)}</span>
@@ -389,11 +436,11 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
 
                                   <div className="text-right">
                                     <div className={`${(tx.type || '').toLowerCase() === 'income'
-                                      ? 'text-green-600' : 'text-red-600'} font-semibold`}>
+                                      ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'} font-semibold`}>
                                       {(tx.type || '').toLowerCase() === 'income' ? '+' : '-'}
                                       {formatCurrency(tx.amount)}
                                     </div>
-                                    <div className="text-xs text-gray-400 mt-1">{formatDateTime(tx.date)}</div>
+                                    <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">{formatDateTime(tx.date)}</div>
                                   </div>
 
                                 </div>

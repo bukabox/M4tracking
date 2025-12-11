@@ -3,6 +3,7 @@
   import react from '@vitejs/plugin-react-swc';
   import tailwindcss from '@tailwindcss/vite'; 
   import path from 'path';
+  import fs from "fs";
 
   export default defineConfig({
     plugins: [react(),
@@ -57,8 +58,19 @@
       outDir: 'build',
     },
     server: {
+      https: {
+      key: fs.readFileSync("./certs/m4.localhost.com-key.pem"),
+      cert: fs.readFileSync("./certs/m4.localhost.com.pem"),
+    },
+    host: "m4.localhost.com",
+    port: 5173,
     proxy: {
       '/api': 'http://127.0.0.1:8124'
+    },
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+      // don't add COEP here
     }
   }
+  
   });
