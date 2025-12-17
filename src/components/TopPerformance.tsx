@@ -2,6 +2,7 @@
 import { Card } from './ui/card';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { PieChart as PieChartIcon } from 'lucide-react';
+import { useCurrency } from '../contexts/CurrencyContext';
 
 interface StreamData {
   name: string;
@@ -30,6 +31,8 @@ function getStreamColor(index: number): string {
 
 
 export function TopPerformance({ streamData }: TopPerformanceProps) {
+    
+    const { formatCurrency } = useCurrency();
     
     // Siapkan data, pastikan value > 0 untuk ditampilkan
     const displayData = streamData
@@ -89,7 +92,7 @@ export function TopPerformance({ streamData }: TopPerformanceProps) {
                                     <span className="text-sm text-gray-600">{item.name}</span>
                                 </div>
                                 <span className="text-sm font-medium text-gray-900">
-                                    Rp {item.value.toLocaleString('id-ID')} ({(item.value / total * 100).toFixed(1)}%)
+                                    {formatCurrency(item.value)} ({(item.value / total * 100).toFixed(1)}%)
                                 </span>
                             </div>
                         ))}

@@ -35,7 +35,11 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -48,7 +52,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(parsed);
       }
     } catch (err) {
-      console.warn("[AuthProvider] failed to parse stored user", err);
+      console.warn(
+        "[AuthProvider] failed to parse stored user",
+        err,
+      );
       localStorage.removeItem("user");
     } finally {
       setIsLoading(false);
@@ -66,12 +73,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const parts = credential.split(".");
         if (parts.length >= 2) {
-          const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+          const base64 = parts[1]
+            .replace(/-/g, "+")
+            .replace(/_/g, "/");
           const jsonPayload = decodeURIComponent(
             atob(base64)
               .split("")
-              .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-              .join("")
+              .map(
+                (c) =>
+                  "%" +
+                  ("00" + c.charCodeAt(0).toString(16)).slice(
+                    -2,
+                  ),
+              )
+              .join(""),
           );
           decoded = JSON.parse(jsonPayload);
         }
@@ -81,29 +96,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       // Attempt backend verification (optional) - read VITE_API_BASE
-      const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8124";
+      const API_BASE =
+        import.meta.env.VITE_API_BASE ||
+        "http://127.0.0.1:8124";
       if (API_BASE) {
         try {
-          const resp = await fetch(`${API_BASE}/api/auth/google`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ credential }),
-          });
+          const resp = await fetch(
+            `${API_BASE}/api/auth/google`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ credential }),
+            },
+          );
           if (resp.ok) {
             const data = await resp.json();
             // backend may return 'user' field
             if (data && data.user) {
               setUser(data.user);
-              localStorage.setItem("user", JSON.stringify(data.user));
+              localStorage.setItem(
+                "user",
+                JSON.stringify(data.user),
+              );
               // backend accepted token => we're done
               setIsLoading(false);
               return;
             }
           } else {
-            console.warn("[AuthProvider] backend verification failed:", resp.status);
+            console.warn(
+              "[AuthProvider] backend verification failed:",
+              resp.status,
+            );
           }
         } catch (err) {
-          console.warn("[AuthProvider] backend verify error:", err);
+          console.warn(
+            "[AuthProvider] backend verify error:",
+            err,
+          );
         }
       }
 
@@ -145,8 +174,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Notify backend asynchronously (fire & forget)
     try {
-      const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8124";
-      fetch(`${API_BASE}/api/auth/logout`, { method: "POST" }).catch(() => {});
+      const API_BASE =
+        import.meta.env.VITE_API_BASE ||
+        "http://127.0.0.1:8124";
+      fetch(`${API_BASE}/api/auth/logout`, {
+        method: "POST",
+      }).catch(() => {});
     } catch (e) {
       /* ignore */
     }
@@ -165,10 +198,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout,
     }),
-    [user, isLoading, login, logout]
+    [user, isLoading, login, logout],
   );
 
-  return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={contextValue}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 /**
@@ -180,7 +217,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function useAuth(): AuthContextType {
   const ctx = useContext(AuthContext);
   if (!ctx) {
-    throw new Error("useAuth must be used within an AuthProvider");
+    throw new Error(
+      "useAuth must be used within an AuthProvider",
+    );
   }
   return ctx;
 }
@@ -200,8 +239,12 @@ export function useAuthOptional(): AuthContextType {
         localStorage.removeItem("user");
         localStorage.removeItem("google_id_token");
         try {
-          const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8124";
-          fetch(`${API_BASE}/api/auth/logout`, { method: "POST" }).catch(() => {});
+          const API_BASE =
+            import.meta.env.VITE_API_BASE ||
+            "http://127.0.0.1:8124";
+          fetch(`${API_BASE}/api/auth/logout`, {
+            method: "POST",
+          }).catch(() => {});
         } catch (e) {}
         // small redirect to home
         window.location.href = "/";

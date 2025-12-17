@@ -3,6 +3,7 @@ import { forwardRef, useMemo, useState, useEffect, useRef } from 'react';
 import { Card } from './ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { Input } from './ui/input';
+import { useCurrency } from '../contexts/CurrencyContext';
 import {
   TrendingUp,
   Hash,
@@ -10,7 +11,9 @@ import {
   ArrowDown,
   FileText,
   Search,
-  Package
+  Package,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 interface ProductData {
@@ -36,10 +39,6 @@ interface ProductListProps {
   products: ProductData[];
   transactions: Tx[];
   pageSize?: number;
-}
-
-function fmtIDR(v: number) {
-  return new Intl.NumberFormat('id-ID').format(Math.round(v || 0));
 }
 
 function makeStaticUrl(id: string) {
@@ -75,8 +74,203 @@ function extractStickerId(tx: Tx): string | null {
   return null;
 }
 
-export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ products = [], transactions = [], pageSize = 5 }, ref) => {
+// Component untuk Paginasi Detail Transactions
+const TransactionPagination = ({ entries, productName }: { entries: Tx[], productName: string }) => {
+  const [detailPage, setDetailPage] = useState(1);
+  const detailPageSize = 5; // 5 items per page untuk detail
 
+  const totalDetailPages = Math.max(1, Math.ceil(entries.length / detailPageSize));
+  
+  // Reset to page 1 if entries change
+  useEffect(() => {
+    setDetailPage(1);
+  }, [entries.length]);
+
+  const visibleEntries = useMemo(() => {
+    const start = (detailPage - 1) * detailPageSize;
+    return entries.slice(start, start + detailPageSize);
+  }, [entries, detailPage, detailPageSize]);
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return '-';
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: "numeric", month: "2-digit", day: "2-digit"
+    }).replace(/\//g, '-');
+  };
+
+  const formatDateTime = (dateString?: string) => {
+    if (!dateString) return '-';
+    return new Date(dateString).toLocaleString('id-ID', {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false
+    });
+  };
+
+  const formatCurrency = (amount?: number) =>
+    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
+      .format(amount || 0);
+
+  const getCategoryIcon = (label?: string, type?: string) => {
+    const t = (type || "").toLowerCase();
+    if (t === "income") return <TrendingUp className="w-5 h-5" />;
+    return <Hash className="w-5 h-5" />;
+  };
+
+  const getCategoryName = (label?: string, type?: string) => {
+    const t = (type || '').toLowerCase();
+    if (t === "income") return "Income";
+    return label || "General";
+  };
+
+  return (
+    <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+      <div className="flex items-center gap-2 mb-4">
+        <FileText className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+        <span className="text-gray-900 dark:text-gray-100 font-medium">Product Transactions</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400 ml-auto">
+          {entries.length} total
+        </span>
+      </div>
+
+      {entries.length === 0 ? (
+        <div className="text-sm text-gray-500 dark:text-gray-400">No transactions for this product.</div>
+      ) : (
+        <>
+          <div className="space-y-3">
+            {visibleEntries.map((tx) => {
+              const sid = extractStickerId(tx);
+              const thumbUrl = sid ? makeStaticUrl(sid) : null;
+
+              return (
+                <div key={tx.id} className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+                        {thumbUrl ? (
+                          <img
+                            src={thumbUrl}
+                            alt="sticker"
+                            className="w-8 h-8 object-contain"
+                            onError={(e) => {
+                              try {
+                                const img = e.currentTarget as HTMLImageElement;
+                                if (!img.dataset.triedAnim && sid) {
+                                  img.dataset.triedAnim = "1";
+                                  img.src = makeAnimationUrl(sid);
+                                  return;
+                                }
+                                if (!img.dataset.triedSticker && sid) {
+                                  img.dataset.triedSticker = "1";
+                                  img.src = makeStickerWebpUrl(sid);
+                                  return;
+                                }
+                                img.onerror = null;
+                                img.style.visibility = 'hidden';
+                              } catch (_) {}
+                            }}
+                          />
+                        ) : (
+                          getCategoryIcon(tx.label, tx.type)
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="text-gray-900 dark:text-gray-100 font-medium text-left">
+                          {tx.label || productName}
+                        </p>
+                        <div className="text-sm text-gray-500 dark:text-gray-400">
+                          <span>{getCategoryName(tx.label, tx.type)}</span>
+                          <span className="mx-2">•</span>
+                          <span>{formatDate(tx.date)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <div className={`${(tx.type || '').toLowerCase() === 'income'
+                        ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'} font-semibold`}>
+                        {(tx.type || '').toLowerCase() === 'income' ? '+' : '-'}
+                        {formatCurrency(tx.amount)}
+                      </div>
+                      <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">{formatDateTime(tx.date)}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Detail Pagination - Only show if more than 5 items */}
+          {totalDetailPages > 1 && (
+            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-gray-600 dark:text-gray-400">
+                  Showing {(detailPage - 1) * detailPageSize + 1}-{Math.min(detailPage * detailPageSize, entries.length)} of {entries.length}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    className="p-1.5 rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    onClick={() => setDetailPage(p => Math.max(1, p - 1))}
+                    disabled={detailPage <= 1}
+                    title="Previous page"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(totalDetailPages, 5) }).map((_, i) => {
+                      let pageNum;
+                      if (totalDetailPages <= 5) {
+                        pageNum = i + 1;
+                      } else {
+                        // Show smart pagination
+                        if (detailPage <= 3) {
+                          pageNum = i + 1;
+                        } else if (detailPage >= totalDetailPages - 2) {
+                          pageNum = totalDetailPages - 4 + i;
+                        } else {
+                          pageNum = detailPage - 2 + i;
+                        }
+                      }
+
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => setDetailPage(pageNum)}
+                          className={`w-7 h-7 text-xs rounded transition-all ${
+                            pageNum === detailPage
+                              ? 'bg-green-600 text-white shadow-sm'
+                              : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    className="p-1.5 rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    onClick={() => setDetailPage(p => Math.min(totalDetailPages, p + 1))}
+                    disabled={detailPage >= totalDetailPages}
+                    title="Next page"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ products = [], transactions = [], pageSize = 10 }, ref) => {
+
+  const { formatCurrency } = useCurrency();
   const [page, setPage] = useState<number>(1);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [sortKey, setSortKey] = useState<'name' | 'total_revenue'>('total_revenue');
@@ -114,37 +308,6 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
   useEffect(() => {
     setPage(1);
   }, [products.length, searchTerm]);
-
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return '-';
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: "numeric", month: "2-digit", day: "2-digit"
-    }).replace(/\//g, '-');
-  };
-
-  const formatDateTime = (dateString?: string) => {
-    if (!dateString) return '-';
-    return new Date(dateString).toLocaleString('id-ID', {
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", hour12: false
-    });
-  };
-
-  const formatCurrency = (amount?: number) =>
-    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
-      .format(amount || 0);
-
-  const getCategoryIcon = (label?: string, type?: string) => {
-    const t = (type || "").toLowerCase();
-    if (t === "income") return <TrendingUp className="w-5 h-5" />;
-    return <Hash className="w-5 h-5" />;
-  };
-
-  const getCategoryName = (label?: string, type?: string) => {
-    const t = (type || '').toLowerCase();
-    if (t === "income") return "Income";
-    return label || "General";
-  };
 
   const normalize = (s?: string) => (s || '').toLowerCase().trim();
 
@@ -244,7 +407,7 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
       <div className="mb-6">
         <div className="flex items-center gap-2 mb-2">
           <Package className="w-5 h-5 text-gray-600" />
-          <h3 className="text-gray-900">Products</h3>
+          <h3 className="text-gray-900">Product SKUs</h3>
         </div>
       </div>
       
@@ -360,96 +523,20 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-xs text-gray-500">{entries.length} entries</span>
                             <span className="text-gray-300">•</span>
-                            <span className="text-xs text-gray-500">Rp {fmtIDR(displayRevenue)}</span>
+                            <span className="text-xs text-gray-500">{formatCurrency(displayRevenue)}</span>
                           </div>
                         </div>
                       </div>
 
                       <div className="text-green-600 font-semibold">
-                        Rp {fmtIDR(displayRevenue)}
+                        {formatCurrency(displayRevenue)}
                       </div>
 
                     </div>
                   </AccordionTrigger>
 
                   <AccordionContent className="pt-4">
-                    <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-                      <div className="flex items-center gap-2 mb-4">
-                        <FileText className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-                        <span className="text-gray-900 dark:text-gray-100">Product Transactions</span>
-                      </div>
-
-                      {entries.length === 0 ? (
-                        <div className="text-sm text-gray-500 dark:text-gray-400">No transactions for this product.</div>
-                      ) : (
-                        <div className="space-y-3">
-                          {entries.map((tx) => {
-                            const sid = extractStickerId(tx);
-                            const thumbUrl = sid ? makeStaticUrl(sid) : null;
-
-                            return (
-                              <div key={tx.id} className="p-3">
-                                <div className="flex items-start justify-between">
-                                  <div className="flex items-start gap-3">
-
-                                    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-                                      {thumbUrl ? (
-                                        <img
-                                          src={thumbUrl}
-                                          alt="sticker"
-                                          className="w-8 h-8 object-contain"
-                                          onError={(e) => {
-                                            try {
-                                              const img = e.currentTarget as HTMLImageElement;
-                                              if (!img.dataset.triedAnim && sid) {
-                                                img.dataset.triedAnim = "1";
-                                                img.src = makeAnimationUrl(sid);
-                                                return;
-                                              }
-                                              if (!img.dataset.triedSticker && sid) {
-                                                img.dataset.triedSticker = "1";
-                                                img.src = makeStickerWebpUrl(sid);
-                                                return;
-                                              }
-                                              img.onerror = null;
-                                              img.style.visibility = 'hidden';
-                                            } catch (_) {}
-                                          }}
-                                        />
-                                      ) : (
-                                        getCategoryIcon(tx.label, tx.type)
-                                      )}
-                                    </div>
-
-                                    <div>
-                                      <p className="text-gray-900 dark:text-gray-100 font-medium text-left">
-                                        {tx.label || p.name}
-                                      </p>
-                                      <div className="text-sm text-gray-500 dark:text-gray-400">
-                                        <span>{getCategoryName(tx.label, tx.type)}</span>
-                                        <span className="mx-2">•</span>
-                                        <span>{formatDate(tx.date)}</span>
-                                      </div>
-                                    </div>
-
-                                  </div>
-
-                                  <div className="text-right">
-                                    <div className={`${(tx.type || '').toLowerCase() === 'income'
-                                      ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'} font-semibold`}>
-                                      {(tx.type || '').toLowerCase() === 'income' ? '+' : '-'}
-                                      {formatCurrency(tx.amount)}
-                                    </div>
-                                    <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">{formatDateTime(tx.date)}</div>
-                                  </div>
-
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                    <TransactionPagination entries={entries} productName={p.name} />
                   </AccordionContent>
 
                 </AccordionItem>
@@ -460,50 +547,69 @@ export const ProductList = forwardRef<HTMLDivElement, ProductListProps>(({ produ
         )}
       </div>
 
+      {/* Main Pagination - 10 items per page */}
       {totalPages > 1 && (
-        <div className="mt-4 flex items-center justify-between">
-          <div className="text-sm text-gray-600">
-            Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> -
-            <span className="font-medium">{Math.min(page * pageSize, sorted.length)}</span> of
-            <span className="font-medium">{sorted.length}</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              className="px-3 py-1 rounded-md border border-gray-200 bg-white text-gray-700 disabled:opacity-50"
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-              disabled={page <= 1}
-            >
-              Prev
-            </button>
-
-            <div className="hidden sm:flex items-center gap-1">
-              {Array.from({ length: totalPages }).map((_, i) => {
-                const n = i + 1;
-                return (
-                  <button
-                    key={n}
-                    onClick={() => setPage(n)}
-                    className={`px-2 py-1 rounded ${n === page
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white border border-gray-200 text-gray-700'
-                    }`}
-                  >
-                    {n}
-                  </button>
-                );
-              })}
+        <div className="mt-6 pt-4 border-t border-gray-200">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-gray-600">
+              Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span>-
+              <span className="font-medium">{Math.min(page * pageSize, sorted.length)}</span> of
+              <span className="font-medium"> {sorted.length}</span> products
             </div>
 
-            <button
-              className="px-3 py-1 rounded-md border border-gray-200 bg-white text-gray-700 disabled:opacity-50"
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-            >
-              Next
-            </button>
-          </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
+                <ChevronLeft className="w-4 h-4" />
+                <span className="hidden sm:inline">Prev</span>
+              </button>
 
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(totalPages, 7) }).map((_, i) => {
+                  let n;
+                  if (totalPages <= 7) {
+                    n = i + 1;
+                  } else {
+                    // Smart pagination
+                    if (page <= 4) {
+                      n = i + 1;
+                    } else if (page >= totalPages - 3) {
+                      n = totalPages - 6 + i;
+                    } else {
+                      n = page - 3 + i;
+                    }
+                  }
+
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => setPage(n)}
+                      className={`w-9 h-9 text-sm rounded-lg transition-all ${
+                        n === page
+                          ? 'bg-green-600 text-white shadow-md'
+                          : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                <span className="hidden sm:inline">Next</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+          </div>
         </div>
       )}
 

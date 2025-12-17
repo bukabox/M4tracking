@@ -116,8 +116,8 @@ export function NotificationPanel({ open, onOpenChange }: NotificationPanelProps
                   key={notification.id}
                   className={`relative p-4 rounded-lg border transition-colors ${
                     notification.read
-                      ? 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
-                      : 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                      ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700'
+                      : 'bg-gray-50 dark:bg-gray-900/20 border-gray-200 dark:border-gray-800'
                   }`}
                   onClick={() => !notification.read && markAsRead(notification.id)}
                 >

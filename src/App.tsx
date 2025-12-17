@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { useLanguage } from "./contexts/LanguageContext";
 import { useAuthOptional } from "./contexts/AuthContext";
+import { useCurrency } from "./contexts/CurrencyContext";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import {
@@ -58,17 +59,20 @@ import { InvestmentCrypto } from "./components/InvestmentCrypto";
 import Report from "./components/Report";
 import { TotalRevenue } from "./components/TotalRevenue";
 import { SettingsSheet } from "./components/SettingsSheet";
+import type { CapitalItem } from "./components/CapitalItemsDialog";
 import { jsPDF } from "jspdf";
 import ProductListManager from "./components/ProductListManager";
 import { apiFetch } from "./lib/api";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
-import { RevenueChart } from './components/RevenueChart';
+import { RevenueChart } from "./components/RevenueChart";
 import {
   NotificationProvider,
   useNotifications,
 } from "./contexts/NotificationContext";
 import { NotificationPanel } from "./components/NotificationPanel";
+import PremiumModal from "./components/PremiumModal";
+import { PricingPage } from "./components/PricingPage";
 
 interface Transaction {
   id: string;
@@ -79,6 +83,7 @@ interface Transaction {
   stream?: string;
   amount: number;
   note?: string;
+  product_id?: string;
   price_idr?: any;
   btc_amount?: any;
 }
@@ -139,18 +144,23 @@ function pctChange(
 }
 
 function AppContent() {
+  console.log('=== AppContent RENDERED ===');
+  
   const { t } = useLanguage();
   const { user, logout } = useAuthOptional();
+  const { formatCurrency } = useCurrency();
   const { addNotification, unreadCount } = useNotifications();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [transactions, setTransactions] = useState<
     Transaction[]
   >([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsDefaultTab, setSettingsDefaultTab] = useState<'finance' | 'appearance' | 'system'>('finance');
   const [notificationPanelOpen, setNotificationPanelOpen] =
     useState(false);
+  const [pricingPageOpen, setPricingPageOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState<boolean>(
-    typeof window !== 'undefined' && window.innerWidth >= 768
+    typeof window !== "undefined" && window.innerWidth >= 768,
   );
 
   // Search & Scroll state
@@ -166,17 +176,46 @@ function AppContent() {
   // Metric state
   const [lifetimeRevenue, setLifetimeRevenue] =
     useState<number>(0);
+  const [lifetimeExpenses, setLifetimeExpenses] =
+    useState<number>(0);
+  const [lifetimeDepreciation, setLifetimeDepreciation] =
+    useState<number>(0);
+  const [lifetimeNetProfit, setLifetimeNetProfit] =
+    useState<number>(0);
   const [streamData, setStreamData] = useState<StreamData[]>(
     [],
   );
 
-  // ROI / Modal (M4) - Updated dengan ROI Target dinamis
+  // Capital Items - NEW structure
+  const [capitalItems, setCapitalItems] = useState<Array<{
+    id: string;
+    name: string;
+    amount: number;
+    depreciable: boolean;
+    periode?: number;
+    residu?: number;
+  }>>([
+    {
+      id: "default_asset_1",
+      name: "M4 Equipment",
+      amount: 25000000,
+      depreciable: true,
+      periode: 12,
+      residu: 5000000
+    }
+  ]);
+  
+  // ROI Target
+  const [roiTarget, setRoiTarget] = useState<number>(200);
+  
+  // Backward compatibility - will be removed
   const [modalM4, setModalM4] = useState<number>(25000000);
-  const [roiTarget, setRoiTarget] = useState<number>(2000); // Default 2000%
+  const [periode, setPeriode] = useState<number>(12);
+  const [residu, setResidu] = useState<number>(0);
 
   // Project Name
   const [projectName, setProjectName] =
-    useState<string>("M4 Tracking");
+    useState<string>("M4 ROI");
 
   // Track screen size for responsive behavior
   useEffect(() => {
@@ -184,8 +223,9 @@ function AppContent() {
       setIsDesktop(window.innerWidth >= 768);
     };
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
+    return () =>
+      window.removeEventListener("resize", handleResize);
   }, []);
 
   // Chart data states
@@ -204,6 +244,7 @@ function AppContent() {
   const [netProfitArr, setNetProfitArr] = useState<number[]>(
     Array(12).fill(0),
   );
+  const [monthlyDepreciation, setMonthlyDepreciation] = useState<number>(0);
   const [lineProducts, setLineProducts] = useState<any[]>([]);
 
   // Derived metrics for cards
@@ -254,6 +295,9 @@ function AppContent() {
       if (!res.ok) return;
       const j = await res.json();
       setLifetimeRevenue(Number(j.lifetime_revenue || 0));
+      setLifetimeExpenses(Number(j.lifetime_expenses || 0));
+      setLifetimeDepreciation(Number(j.lifetime_depreciation || 0));
+      setLifetimeNetProfit(Number(j.lifetime_net_profit || 0));
     } catch (e) {
       console.warn("fetchLifetimeMetrics failed", e);
     }
@@ -421,6 +465,7 @@ function AppContent() {
       const j = await res.json();
 
       const openingBalance = Number(j.opening_balance || 0);
+      const monthlyDepreciationValue = Number(j.monthly_depreciation || 0);
       const labels = j.labels || [];
       const income = (j.income || []).map((x: any) =>
         Number(x || 0),
@@ -436,6 +481,7 @@ function AppContent() {
       setIncomeArr(income);
       setExpenseArr(expense);
       setInvestArr(invest);
+      setMonthlyDepreciation(monthlyDepreciationValue);
 
       const now = new Date();
       const idx = now.getMonth();
@@ -450,34 +496,42 @@ function AppContent() {
         0,
       );
 
-      const nettArr = income.map(
+      // CORRECTED CALCULATION: Net Profit = Income - Expense - Depreciation
+      // Each month includes depreciation cost
+      const netProfitArr = income.map(
+        (inc: number, i: number) =>
+          inc - (expense[i] || 0) - monthlyDepreciationValue,
+      );
+      setNetProfitArr(netProfitArr);
+
+      // Cash Result = Net Profit - Investment (for balance calculation)
+      const cashResultArr = income.map(
         (inc: number, i: number) =>
           inc - (expense[i] || 0) - (invest[i] || 0),
       );
-      setNetProfitArr(nettArr);
 
-      const currentYearProfit = nettArr
+      const currentYearCashResult = cashResultArr
         .slice(0, idx + 1)
         .reduce((s: number, v: number) => s + v, 0);
       const cumulativeUpToIdx =
-        openingBalance + currentYearProfit;
+        openingBalance + currentYearCashResult;
 
-      const prevYearProfit =
+      const prevYearCashResult =
         prevIdx >= 0
-          ? nettArr
+          ? cashResultArr
               .slice(0, prevIdx + 1)
               .reduce((s: number, v: number) => s + v, 0)
           : 0;
       const cumulativeUpToPrev =
-        openingBalance + prevYearProfit;
+        openingBalance + prevYearCashResult;
 
       const revenueThisMonth = income[idx] || 0;
       const expenseThisMonth = expense[idx] || 0;
-      const netThisMonth = nettArr[idx] || 0;
+      const netProfitThisMonth = netProfitArr[idx] || 0;
 
       setTotalRevenue(revenueThisMonth);
       setTotalExpenses(expenseThisMonth);
-      setNetProfitTotal(netThisMonth);
+      setNetProfitTotal(netProfitThisMonth);
       setTotalBalance(cumulativeUpToIdx);
 
       setChanges({
@@ -494,8 +548,8 @@ function AppContent() {
           prevIdx >= 0 ? expense[prevIdx] || 0 : 0,
         ),
         net: pctChange(
-          netThisMonth,
-          prevIdx >= 0 ? nettArr[prevIdx] || 0 : 0,
+          netProfitThisMonth,
+          prevIdx >= 0 ? netProfitArr[prevIdx] || 0 : 0,
         ),
       });
     } catch (e) {
@@ -505,12 +559,16 @@ function AppContent() {
 
   // Initial Data Fetch
   const loadInitialData = () => {
+    console.log("🚀 loadInitialData() called");
     async function loadTx() {
       try {
+        console.log("🔄 Fetching transactions from /api/transactions...");
         const res = await apiFetch("/api/transactions");
+        console.log("📡 Response status:", res.status, res.ok);
         if (!res.ok)
           throw new Error("failed to fetch transactions");
         const json = await res.json();
+        console.log("✅ Transactions loaded:", json?.length || 0, "items", json);
         const mapped = (json || []).map((t: any) => ({
           id: String(t.id),
           type: (
@@ -522,15 +580,18 @@ function AppContent() {
           stream: t.stream ?? "",
           amount: Number(t.amount || t.amount_idr || 0),
           note: t.note || "",
+          product_id: t.product_id || t.productId || undefined,
           price_idr: t.price_idr ?? t.btc_price_idr ?? null,
           btc_amount: t.btc_amount ?? t.btcAmount ?? null,
         })) as Transaction[];
+        console.log("📊 Mapped transactions:", mapped.length, "items");
         setTransactions(mapped);
       } catch (e) {
-        console.warn("load transactions failed", e);
+        console.error("❌ Load transactions failed:", e);
       }
     }
 
+    console.log("📞 Calling loadTx()...");
     loadTx();
     refreshMonthlyAndMetrics();
     fetchLifetimeMetrics();
@@ -544,21 +605,74 @@ function AppContent() {
     let mounted = true;
 
     // define fetchUserSettings as async (move definition here or keep above)
+    // Load settings from backend (per-user) with localStorage fallback
     const fetchUserSettings = async (): Promise<boolean> => {
       try {
         const res = await apiFetch("/api/user_settings");
         if (!res.ok) {
-          // unauthenticated or server rejected => indicate failure so caller will use fallback
           return false;
         }
         const j = await res.json();
-        if (mounted && j && j.projectName) {
-          setProjectName(String(j.projectName));
-          // keep localStorage in sync for offline/fallback
-          localStorage.setItem(
-            "projectName",
-            String(j.projectName),
-          );
+        if (mounted) {
+          // Load project name from backend
+          if (j && j.projectName) {
+            setProjectName(String(j.projectName));
+            localStorage.setItem("projectName", String(j.projectName));
+          }
+
+          // NEW: Load capital_items from backend
+          if (j && j.capital_items && Array.isArray(j.capital_items)) {
+            setCapitalItems(j.capital_items);
+            localStorage.setItem("capital_items", JSON.stringify(j.capital_items));
+            
+            // Calculate total for backward compatibility
+            const total = j.capital_items.reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
+            setModalM4(total);
+            localStorage.setItem("initialModal", String(total));
+          } else if (j && j.initialModal) {
+            // Fallback: old structure, migrate to capital_items
+            const parsed = Number(j.initialModal);
+            if (!isNaN(parsed) && parsed > 0) {
+              const migrated = [{
+                id: "migrated_asset",
+                name: "Initial Capital",
+                amount: parsed,
+                depreciable: true,
+                periode: j.periode || 12,
+                residu: j.residu || 0
+              }];
+              setCapitalItems(migrated);
+              setModalM4(parsed);
+              localStorage.setItem("capital_items", JSON.stringify(migrated));
+              localStorage.setItem("initialModal", String(parsed));
+            }
+          }
+
+          // Load ROI target from backend
+          if (j && j.roiTarget) {
+            const parsed = Number(j.roiTarget);
+            if (!isNaN(parsed) && parsed > 0) {
+              setRoiTarget(parsed);
+              localStorage.setItem("roiTarget", String(parsed));
+            }
+          }
+
+          // Backward compatibility: Load old fields
+          if (j && j.periode !== undefined) {
+            const parsed = Number(j.periode);
+            if (!isNaN(parsed) && parsed > 0) {
+              setPeriode(parsed);
+              localStorage.setItem("periode", String(parsed));
+            }
+          }
+
+          if (j && j.residu !== undefined) {
+            const parsed = Number(j.residu);
+            if (!isNaN(parsed) && parsed >= 0) {
+              setResidu(parsed);
+              localStorage.setItem("residu", String(parsed));
+            }
+          }
         }
         return true;
       } catch (e) {
@@ -567,44 +681,88 @@ function AppContent() {
       }
     };
 
-    // async init runner so we can await server settings before localStorage fallback
-    (async () => {
-      // load main app data (transactions etc.)
-      loadInitialData();
+    const loadLocalSettings = () => {
+      if (!mounted) return;
 
-      // try server first
-      const ok = await fetchUserSettings();
+      // Load project name from localStorage
+      const savedProjectName = localStorage.getItem("projectName");
+      if (savedProjectName) {
+        setProjectName(savedProjectName);
+      }
 
-      // Now load modal & ROI & theme (these are local-only)
-      const savedModal = localStorage.getItem("initialModal");
-      if (savedModal) {
-        const parsed = Number(savedModal);
-        if (!isNaN(parsed) && parsed > 0) {
-          setModalM4(parsed);
+      // NEW: Load capital_items from localStorage
+      const savedCapitalItems = localStorage.getItem("capital_items");
+      if (savedCapitalItems) {
+        try {
+          const parsed = JSON.parse(savedCapitalItems);
+          if (Array.isArray(parsed)) {
+            setCapitalItems(parsed);
+            const total = parsed.reduce((sum, item) => sum + (item.amount || 0), 0);
+            setModalM4(total);
+          }
+        } catch (e) {
+          console.warn("Failed to parse capital_items from localStorage", e);
+        }
+      } else {
+        // Fallback to old initialModal
+        const savedModal = localStorage.getItem("initialModal");
+        if (savedModal) {
+          const parsed = Number(savedModal);
+          if (!isNaN(parsed) && parsed > 0) {
+            setModalM4(parsed);
+          }
         }
       }
 
-      const savedRoiTarget = localStorage.getItem("roiTarget");
-      if (savedRoiTarget) {
-        const parsed = Number(savedRoiTarget);
+      // Load ROI target from localStorage
+      const savedRoi = localStorage.getItem("roiTarget");
+      if (savedRoi) {
+        const parsed = Number(savedRoi);
         if (!isNaN(parsed) && parsed > 0) {
           setRoiTarget(parsed);
         }
       }
 
-      // Only use localStorage projectName if server did not provide one
-      if (!ok) {
-        const savedProjectName =
-          localStorage.getItem("projectName");
-        if (savedProjectName) {
-          setProjectName(savedProjectName);
+      // Load periode from localStorage
+      const savedPeriode = localStorage.getItem("periode");
+      if (savedPeriode) {
+        const parsed = Number(savedPeriode);
+        if (!isNaN(parsed) && parsed > 0) {
+          setPeriode(parsed);
         }
+      }
+
+      // Load residu from localStorage
+      const savedResidu = localStorage.getItem("residu");
+      if (savedResidu) {
+        const parsed = Number(savedResidu);
+        if (!isNaN(parsed) && parsed >= 0) {
+          setResidu(parsed);
+        }
+      }
+    };
+
+    // async init runner
+    (async () => {
+      // Try loading from backend first (per-user settings)
+      const ok = await fetchUserSettings();
+      
+      // Load main app data (transactions etc.) AFTER fetching settings
+      // This ensures we have valid session before making API calls
+      loadInitialData();
+      
+      // Fallback to localStorage if backend fails
+      if (!ok) {
+        loadLocalSettings();
       }
 
       // Load and apply theme from localStorage (unchanged)
       const savedThemeMode = (localStorage.getItem(
         "themeMode",
       ) || "auto") as "auto" | "light" | "dark";
+      
+      console.log('[App] Theme mode:', savedThemeMode);
+      
       const getSystemTheme = (): "light" | "dark" => {
         if (
           typeof window !== "undefined" &&
@@ -619,12 +777,17 @@ function AppContent() {
         return "light";
       };
 
+      const systemTheme = getSystemTheme();
+      console.log('[App] System theme:', systemTheme);
+
       let shouldBeDark = false;
       if (savedThemeMode === "auto") {
         shouldBeDark = getSystemTheme() === "dark";
       } else {
         shouldBeDark = savedThemeMode === "dark";
       }
+      
+      console.log('[App] Applying dark mode:', shouldBeDark);
 
       if (shouldBeDark) {
         document.documentElement.classList.add("dark");
@@ -671,6 +834,95 @@ function AppContent() {
   useEffect(() => {
     document.title = projectName || "FinanceHub";
   }, [projectName]);
+
+  // Theme management with multiple listeners
+  useEffect(() => {
+    console.log('=== THEME MANAGEMENT useEffect CALLED ===');
+    
+    const getSystemTheme = (): "light" | "dark" => {
+      if (typeof window !== "undefined" && window.matchMedia) {
+        return window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light";
+      }
+      return "light";
+    };
+    
+    // Reusable function to apply theme
+    const applyTheme = () => {
+      const themeMode = localStorage.getItem("themeMode") || "auto";
+      console.log('🎨 [Apply Theme] Mode:', themeMode);
+      
+      let shouldBeDark = false;
+      
+      if (themeMode === "auto") {
+        shouldBeDark = getSystemTheme() === "dark";
+        console.log('🎨 [Apply Theme] Auto mode - System is:', getSystemTheme());
+      } else {
+        shouldBeDark = themeMode === "dark";
+        console.log('🎨 [Apply Theme] Manual mode:', themeMode);
+      }
+      
+      if (shouldBeDark) {
+        document.documentElement.classList.add("dark");
+        console.log('🎨 [Apply Theme] ✅ Added "dark" class');
+      } else {
+        document.documentElement.classList.remove("dark");
+        console.log('🎨 [Apply Theme] ✅ Removed "dark" class');
+      }
+    };
+    
+    // Apply theme on mount
+    applyTheme();
+    
+    // Listen to system theme changes (auto mode)
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleSystemChange = () => {
+      const currentMode = localStorage.getItem("themeMode") || "auto";
+      if (currentMode === "auto") {
+        console.log('🌓 [System Change] Detected, re-applying theme');
+        applyTheme();
+      }
+    };
+    
+    // Listen to localStorage changes (cross-tab sync)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "themeMode") {
+        console.log('💾 [Storage Change] Theme mode changed in another tab');
+        applyTheme();
+      }
+    };
+    
+    // Listen to custom event (same window, from SettingsSheet)
+    const handleThemeChanged = () => {
+      console.log('⚡ [Custom Event] themeChanged event received');
+      applyTheme();
+    };
+    
+    // Register all listeners
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", handleSystemChange);
+    } else if ((mediaQuery as any).addListener) {
+      (mediaQuery as any).addListener(handleSystemChange);
+    }
+    
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("themeChanged", handleThemeChanged);
+    
+    console.log('✅ [Theme] All listeners registered');
+    
+    // Cleanup
+    return () => {
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener("change", handleSystemChange);
+      } else if ((mediaQuery as any).removeListener) {
+        (mediaQuery as any).removeListener(handleSystemChange);
+      }
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("themeChanged", handleThemeChanged);
+      console.log('🧹 [Theme] Listeners cleaned up');
+    };
+  }, []);
 
   // Handlers
   const mergeTransactionIntoState = useCallback((tx: any) => {
@@ -788,6 +1040,12 @@ function AppContent() {
       if (!tx) return;
       mergeTransactionIntoState(tx);
       console.debug("[APP] transaction:added event merged", tx);
+
+      // Auto-refresh lifetime metrics for real-time ROI update
+      fetchLifetimeMetrics();
+      console.debug(
+        "[APP] fetchLifetimeMetrics triggered by transaction:added",
+      );
     };
     window.addEventListener(
       "transaction:added",
@@ -798,7 +1056,28 @@ function AppContent() {
         "transaction:added",
         handler as EventListener,
       );
-  }, [mergeTransactionIntoState]);
+  }, [mergeTransactionIntoState, fetchLifetimeMetrics]);
+
+  // Listen for bulk import events - reload ALL data
+  useEffect(() => {
+    const handler = (e: any) => {
+      const count = e?.detail?.count || 0;
+      console.log("[APP] 🚀 transaction:bulk-imported event received");
+      console.log(`[APP]   Reloading all data after ${count} transactions imported`);
+      
+      // Full data reload after bulk import
+      loadInitialData();
+    };
+    window.addEventListener(
+      "transaction:bulk-imported",
+      handler as EventListener,
+    );
+    return () =>
+      window.removeEventListener(
+        "transaction:bulk-imported",
+        handler as EventListener,
+      );
+  }, [loadInitialData]);
 
   // Listen for crypto:updated events
   useEffect(() => {
@@ -881,6 +1160,7 @@ function AppContent() {
         category: tx.category ?? tx.label ?? "",
         stream: tx.stream ?? "",
         note: tx.note ?? "",
+        product_id: tx.product_id ?? undefined,
         price_idr: tx.price_idr ?? null,
         btc_amount: tx.btc_amount ?? null,
         label: tx.label ?? undefined,
@@ -896,6 +1176,8 @@ function AppContent() {
   const exportCombinedJSON = async () => {
     const cash = buildNormalizedCashflowArray();
     let crypto = { holdings: [], meta: {} };
+    let products: any[] = [];
+    
     try {
       const r = await apiFetch("/api/crypto_holdings");
       if (r.ok) crypto = await r.json();
@@ -903,10 +1185,21 @@ function AppContent() {
       /* ignore */
     }
 
+    try {
+      const r = await apiFetch("/api/product_list");
+      if (r.ok) {
+        const data = await r.json();
+        products = Array.isArray(data) ? data : [];
+      }
+    } catch (e) {
+      console.warn("Failed to fetch products for export:", e);
+    }
+
     const payload = {
       exportDate: new Date().toISOString(),
       cashflow: cash,
       crypto: crypto,
+      products: products,
     };
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -1189,7 +1482,13 @@ function AppContent() {
       (sum, val) => sum + val,
       0,
     );
-    const yearNet = yearIncome - yearExpense - yearInvestment;
+    // Calculate active months for depreciation
+    const activeMonthsForPdf = incomeArr.filter((val, idx) => val > 0 || expenseArr[idx] > 0).length;
+    const totalYearlyDepreciationPdf = monthlyDepreciation * activeMonthsForPdf;
+    
+    // CORRECTED: Net Profit = Income - Expense - Depreciation
+    // Investment is NOT subtracted (capital movement, not operational expense)
+    const yearNet = yearIncome - yearExpense - totalYearlyDepreciationPdf;
 
     const cardData = [
       {
@@ -1209,6 +1508,7 @@ function AppContent() {
         value: fmtIDR(yearInvestment),
         bgColor: PDF_COLORS.bgSecondary,
         accentColor: PDF_COLORS.investment,
+        note: "(from balance)", // Investment data comes from balance transactions
       },
       {
         label: "Net Profit",
@@ -1338,7 +1638,8 @@ function AppContent() {
       const income = incomeArr[monthIdx] || 0;
       const expense = expenseArr[monthIdx] || 0;
       const investment = investArr[monthIdx] || 0;
-      const net = income - expense - investment;
+      // CORRECTED: Net Profit = Income - Expense (Investment NOT subtracted)
+      const net = income - expense;
 
       if (monthIdx % 2 === 0) {
         doc.setFillColor(...hexToRgb(PDF_COLORS.bgPrimary));
@@ -1394,7 +1695,7 @@ function AppContent() {
 
     doc.setFontSize(6);
     doc.text(
-      `© ${new Date().getFullYear()} BUKABOX M4 Tracking system. All rights reserved.`,
+      `© ${new Date().getFullYear()} BUKABOX M4 ROI system. All rights reserved.`,
       pageWidth / 2,
       footerY + 8,
       { align: "center" },
@@ -1442,7 +1743,7 @@ function AppContent() {
               {user?.picture ? (
                 <img
                   src={user.picture}
-                  alt={user.name || 'User'}
+                  alt={user.name || "User"}
                   className="w-6 h-6 rounded-full object-cover border-2 border-gray-200 dark:border-gray-600"
                 />
               ) : (
@@ -1466,7 +1767,7 @@ function AppContent() {
                       {user?.picture ? (
                         <img
                           src={user.picture}
-                          alt={user.name || 'User'}
+                          alt={user.name || "User"}
                           className="w-10 h-10 rounded-full object-cover"
                         />
                       ) : (
@@ -1476,10 +1777,10 @@ function AppContent() {
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-gray-900 dark:text-gray-100 truncate">
-                          {user?.name || 'User'}
+                          {user?.name || "User"}
                         </p>
                         <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
-                          {user?.email || 'user@example.com'}
+                          {user?.email || "user@example.com"}
                         </p>
                       </div>
                     </div>
@@ -1496,7 +1797,9 @@ function AppContent() {
                     >
                       <LogOut className="w-4 h-4" />
                       <div>
-                        <div className="font-medium">Sign Out</div>
+                        <div className="font-medium">
+                          Sign Out
+                        </div>
                         <div className="text-xs text-gray-500 dark:text-gray-400">
                           Log out from your account
                         </div>
@@ -1643,82 +1946,85 @@ function AppContent() {
               {/* User Icon - Desktop only (sebelah notification bell) */}
               {isDesktop && (
                 <div className="relative">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative"
-                onClick={() => setShowUserMenu(!showUserMenu)}
-              >
-                {user?.picture ? (
-                  <img
-                    src={user.picture}
-                    alt={user.name || "User"}
-                    className="w-6 h-6 rounded-full object-cover border-2 border-gray-200 dark:border-gray-600"
-                  />
-                ) : (
-                  <UserIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                )}
-              </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="relative"
+                    onClick={() =>
+                      setShowUserMenu(!showUserMenu)
+                    }
+                  >
+                    {user?.picture ? (
+                      <img
+                        src={user.picture}
+                        alt={user.name || "User"}
+                        className="w-6 h-6 rounded-full object-cover border-2 border-gray-200 dark:border-gray-600"
+                      />
+                    ) : (
+                      <UserIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                    )}
+                  </Button>
 
-              {showUserMenu && (
-                <>
-                  {/* Backdrop overlay to close menu */}
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setShowUserMenu(false)}
-                  />
+                  {showUserMenu && (
+                    <>
+                      {/* Backdrop overlay to close menu */}
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => setShowUserMenu(false)}
+                      />
 
-                  {/* User dropdown menu */}
-                  <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50">
-                    {/* User Info */}
-                    <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-                      <div className="flex items-center gap-3">
-                        {user?.picture ? (
-                          <img
-                            src={user.picture}
-                            alt={user.name || "User"}
-                            className="w-10 h-10 rounded-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                            <UserIcon className="w-5 h-5 text-gray-500" />
+                      {/* User dropdown menu */}
+                      <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50">
+                        {/* User Info */}
+                        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                          <div className="flex items-center gap-3">
+                            {user?.picture ? (
+                              <img
+                                src={user.picture}
+                                alt={user.name || "User"}
+                                className="w-10 h-10 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                                <UserIcon className="w-5 h-5 text-gray-500" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-gray-900 dark:text-gray-100 truncate">
+                                {user?.name || "User"}
+                              </p>
+                              <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                                {user?.email ||
+                                  "user@example.com"}
+                              </p>
+                            </div>
                           </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-gray-900 dark:text-gray-100 truncate">
-                            {user?.name || "User"}
-                          </p>
-                          <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
-                            {user?.email || "user@example.com"}
-                          </p>
+                        </div>
+
+                        {/* Menu Items */}
+                        <div className="py-1">
+                          <button
+                            className="w-full text-left px-4 py-3 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-3"
+                            onClick={() => {
+                              setShowUserMenu(false);
+                              logout();
+                            }}
+                          >
+                            <LogOut className="w-4 h-4" />
+                            <div>
+                              <div className="font-medium">
+                                Sign Out
+                              </div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400">
+                                Log out from your account
+                              </div>
+                            </div>
+                          </button>
                         </div>
                       </div>
-                    </div>
-
-                    {/* Menu Items */}
-                    <div className="py-1">
-                      <button
-                        className="w-full text-left px-4 py-3 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-3"
-                        onClick={() => {
-                          setShowUserMenu(false);
-                          logout();
-                        }}
-                      >
-                        <LogOut className="w-4 h-4" />
-                        <div>
-                          <div className="font-medium">
-                            Sign Out
-                          </div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400">
-                            Log out from your account
-                          </div>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
+                    </>
+                  )}
+                </div>
               )}
 
               <Button
@@ -1731,7 +2037,7 @@ function AppContent() {
             </div>
 
             <Button
-              className={`bg-green-500 hover:bg-green-600 ${isDesktop ? '' : 'hidden'}`}
+              className={`bg-green-500 hover:bg-green-600 ${isDesktop ? "" : "hidden"}`}
               onClick={() => setDialogOpen(true)}
             >
               <Plus className="w-4 h-4 mr-2" />
@@ -1805,11 +2111,18 @@ function AppContent() {
         {/* TotalRevenue Component */}
         <TotalRevenue
           lifetimeRevenue={lifetimeRevenue}
+          lifetimeExpenses={lifetimeExpenses}
+          lifetimeDepreciation={lifetimeDepreciation}
+          lifetimeNetProfit={lifetimeNetProfit}
+          capitalItems={capitalItems}
           initialModal={modalM4}
           roiTarget={roiTarget}
-          onModalChange={(value) => {
-            setModalM4(value);
-            localStorage.setItem("initialModal", String(value));
+          totalExpenses={totalExpenses}
+          periode={periode}
+          residu={residu}
+          onOpenSettings={() => {
+            setSettingsDefaultTab('finance');
+            setSettingsOpen(true);
           }}
         />
 
@@ -1821,7 +2134,7 @@ function AppContent() {
               icon={<Wallet className="w-5 h-5" />}
               iconBgColor="bg-cyan-500"
               title="Total Balance"
-              value={`Rp ${fmtIDR(totalBalance)}`}
+              value={formatCurrency(totalBalance)}
               change={changes.balance.text}
               changeType={changes.balance.type}
               comparison="vs last month"
@@ -1830,7 +2143,7 @@ function AppContent() {
               icon={<BanknoteArrowDown className="w-5 h-5" />}
               iconBgColor="bg-green-500"
               title="Total Revenue"
-              value={`Rp ${fmtIDR(totalRevenue)}`}
+              value={formatCurrency(totalRevenue)}
               change={changes.revenue.text}
               changeType={changes.revenue.type}
               comparison="vs last month"
@@ -1839,7 +2152,7 @@ function AppContent() {
               icon={<BanknoteArrowUp className="w-5 h-5" />}
               iconBgColor="bg-orange-500"
               title="Total Expenses"
-              value={`Rp ${fmtIDR(totalExpenses)}`}
+              value={formatCurrency(totalExpenses)}
               change={changes.expenses.text}
               changeType={changes.expenses.type}
               comparison="vs last month"
@@ -1856,7 +2169,7 @@ function AppContent() {
               icon={<Wallet className="w-5 h-5" />}
               iconBgColor="bg-cyan-500"
               title="Total Balance"
-              value={`Rp ${fmtIDR(totalBalance)}`}
+              value={formatCurrency(totalBalance)}
               change={changes.balance.text}
               changeType={changes.balance.type}
               comparison="vs last month"
@@ -1865,7 +2178,7 @@ function AppContent() {
               icon={<BanknoteArrowDown className="w-5 h-5" />}
               iconBgColor="bg-green-500"
               title="Total Revenue"
-              value={`Rp ${fmtIDR(totalRevenue)}`}
+              value={formatCurrency(totalRevenue)}
               change={changes.revenue.text}
               changeType={changes.revenue.type}
               comparison="vs last month"
@@ -1875,7 +2188,7 @@ function AppContent() {
               icon={<Wallet className="w-5 h-5" />}
               iconBgColor="bg-blue-500"
               title="Total Investment"
-              value={`Rp ${fmtIDR(totalInvestedIdr)}`}
+              value={formatCurrency(totalInvestedIdr)}
               change={
                 totalInvestedIdr > 0 && btcPriceIdr > 0
                   ? `${((btcPriceIdr * totalBtcAmount - totalInvestedIdr) / totalInvestedIdr) * 100 >= 0 ? "+" : ""}${(((btcPriceIdr * totalBtcAmount - totalInvestedIdr) / totalInvestedIdr) * 100).toFixed(1)}%`
@@ -1924,7 +2237,7 @@ function AppContent() {
               }
               comparison={
                 btcPriceIdr > 0
-                  ? `Rp ${fmtIDR(btcPriceIdr * totalBtcAmount)}`
+                  ? formatCurrency(btcPriceIdr * totalBtcAmount)
                   : "—"
               }
             />
@@ -1936,7 +2249,7 @@ function AppContent() {
               icon={<Wallet className="w-5 h-5" />}
               iconBgColor="bg-cyan-500"
               title="Total Balance"
-              value={`Rp ${fmtIDR(totalBalance)}`}
+              value={formatCurrency(totalBalance)}
               change={changes.balance.text}
               changeType={changes.balance.type}
               comparison="vs last month"
@@ -1945,7 +2258,7 @@ function AppContent() {
               icon={<BanknoteArrowDown className="w-5 h-5" />}
               iconBgColor="bg-green-500"
               title="Total Revenue"
-              value={`Rp ${fmtIDR(totalRevenue)}`}
+              value={formatCurrency(totalRevenue)}
               change={changes.revenue.text}
               changeType={changes.revenue.type}
               comparison="vs last month"
@@ -1954,7 +2267,7 @@ function AppContent() {
               icon={<BanknoteArrowUp className="w-5 h-5" />}
               iconBgColor="bg-orange-500"
               title="Total Expenses"
-              value={`Rp ${fmtIDR(totalExpenses)}`}
+              value={formatCurrency(totalExpenses)}
               change={changes.expenses.text}
               changeType={changes.expenses.type}
               comparison="vs last month"
@@ -1963,7 +2276,7 @@ function AppContent() {
               icon={<DollarSign className="w-5 h-5" />}
               iconBgColor="bg-purple-500"
               title="Net Profit"
-              value={`Rp ${fmtIDR(netProfitTotal)}`}
+              value={formatCurrency(netProfitTotal)}
               change={changes.net.text}
               changeType={changes.net.type}
               comparison="vs last month"
@@ -1971,6 +2284,12 @@ function AppContent() {
           </div>
         ) : (
           // Report Tab: Show Year Summary Cards
+          (() => {
+            // Calculate active months (months with income or expense)
+            const activeMonths = incomeArr.filter((val, idx) => val > 0 || expenseArr[idx] > 0).length;
+            const totalYearlyDepreciation = monthlyDepreciation * activeMonths;
+            
+            return (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
               <div className="flex items-start justify-between mb-4">
@@ -1982,11 +2301,18 @@ function AppContent() {
                 </span>
               </div>
               <div>
-                <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">
+                <p className="text-gray-500 dark:text-gray-400 text-sm mb-2 font-medium">
                   Total Revenue
                 </p>
-                <p className="text-gray-900 dark:text-gray-100 mb-1">
-                  {fmtIDRCurrency(
+                <p
+                  className="text-gray-900 dark:text-gray-100 mb-2 tracking-tight"
+                  style={{
+                    fontSize: "1.75rem",
+                    lineHeight: "2rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  {formatCurrency(
                     incomeArr.reduce(
                       (sum, val) => sum + val,
                       0,
@@ -2009,11 +2335,18 @@ function AppContent() {
                 </span>
               </div>
               <div>
-                <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">
+                <p className="text-gray-500 dark:text-gray-400 text-sm mb-2 font-medium">
                   Total Expenses
                 </p>
-                <p className="text-gray-900 dark:text-gray-100 mb-1">
-                  {fmtIDRCurrency(
+                <p
+                  className="text-gray-900 dark:text-gray-100 mb-2 tracking-tight"
+                  style={{
+                    fontSize: "1.75rem",
+                    lineHeight: "2rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  {formatCurrency(
                     expenseArr.reduce(
                       (sum, val) => sum + val,
                       0,
@@ -2036,11 +2369,18 @@ function AppContent() {
                 </span>
               </div>
               <div>
-                <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">
+                <p className="text-gray-500 dark:text-gray-400 text-sm mb-2 font-medium">
                   Total Investment
                 </p>
-                <p className="text-gray-900 dark:text-gray-100 mb-1">
-                  {fmtIDRCurrency(
+                <p
+                  className="text-gray-900 dark:text-gray-100 mb-2 tracking-tight"
+                  style={{
+                    fontSize: "1.75rem",
+                    lineHeight: "2rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  {formatCurrency(
                     investArr.reduce(
                       (sum, val) => sum + val,
                       0,
@@ -2056,24 +2396,29 @@ function AppContent() {
             <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
               <div className="flex items-start justify-between mb-4">
                 <div
-                  className={`w-12 h-12 rounded-xl ${incomeArr.reduce((sum, val) => sum + val, 0) - expenseArr.reduce((sum, val) => sum + val, 0) - investArr.reduce((sum, val) => sum + val, 0) >= 0 ? "bg-purple-500" : "bg-gray-500"} flex items-center justify-center text-white`}
+                  className={`w-12 h-12 rounded-xl ${incomeArr.reduce((sum, val) => sum + val, 0) - expenseArr.reduce((sum, val) => sum + val, 0) - totalYearlyDepreciation >= 0 ? "bg-purple-500" : "bg-gray-500"} flex items-center justify-center text-white`}
                 >
                   <DollarSign className="w-5 h-5" />
                 </div>
                 <span
-                  className={`px-2 py-1 rounded text-sm ${incomeArr.reduce((sum, val) => sum + val, 0) - expenseArr.reduce((sum, val) => sum + val, 0) - investArr.reduce((sum, val) => sum + val, 0) >= 0 ? "bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400" : "bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400"}`}
+                  className={`px-2 py-1 rounded text-sm ${incomeArr.reduce((sum, val) => sum + val, 0) - expenseArr.reduce((sum, val) => sum + val, 0) - totalYearlyDepreciation >= 0 ? "bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400" : "bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400"}`}
                 >
                   Net
                 </span>
               </div>
               <div>
-                <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">
+                <p className="text-gray-500 dark:text-gray-400 text-sm mb-2 font-medium">
                   Net Profit
                 </p>
                 <p
-                  className={`mb-1 ${incomeArr.reduce((sum, val) => sum + val, 0) - expenseArr.reduce((sum, val) => sum + val, 0) - investArr.reduce((sum, val) => sum + val, 0) >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+                  className={`mb-2 tracking-tight ${incomeArr.reduce((sum, val) => sum + val, 0) - expenseArr.reduce((sum, val) => sum + val, 0) - totalYearlyDepreciation >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+                  style={{
+                    fontSize: "1.75rem",
+                    lineHeight: "2rem",
+                    fontWeight: 700,
+                  }}
                 >
-                  {fmtIDRCurrency(
+                  {formatCurrency(
                     incomeArr.reduce(
                       (sum, val) => sum + val,
                       0,
@@ -2082,18 +2427,17 @@ function AppContent() {
                         (sum, val) => sum + val,
                         0,
                       ) -
-                      investArr.reduce(
-                        (sum, val) => sum + val,
-                        0,
-                      ),
+                      totalYearlyDepreciation,
                   )}
                 </p>
                 <p className="text-gray-400 dark:text-gray-500 text-xs">
-                  year {new Date().getFullYear()}
+                  year {new Date().getFullYear()} ({activeMonths} months)
                 </p>
               </div>
             </Card>
           </div>
+            );
+          })()
         )}
 
         {/* Tabs */}
@@ -2103,15 +2447,19 @@ function AppContent() {
           className="mb-6"
           onValueChange={setActiveTab}
         >
-           {isDesktop && (
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="investment">
-              Investment
-            </TabsTrigger>
-            <TabsTrigger value="analytic">Analytic</TabsTrigger>
-            <TabsTrigger value="report">Report</TabsTrigger>
-          </TabsList>
+          {isDesktop && (
+            <TabsList>
+              <TabsTrigger value="overview">
+                Overview
+              </TabsTrigger>
+              <TabsTrigger value="investment">
+                Investment
+              </TabsTrigger>
+              <TabsTrigger value="analytic">
+                Analytic
+              </TabsTrigger>
+              <TabsTrigger value="report">Report</TabsTrigger>
+            </TabsList>
           )}
           <TabsContent value="overview" className="mt-6">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -2145,15 +2493,13 @@ function AppContent() {
           <TabsContent value="analytic" className="mt-6">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
               <div className="lg:col-span-2">
-                
-                
-              <RevenueChart
-                monthlyLabels={monthlyLabels}
-                incomeArr={incomeArr}
-                transactions={transactions}
-                currentYear={new Date().getFullYear()}
-              />
-            
+                <RevenueChart
+                  monthlyLabels={monthlyLabels}
+                  incomeArr={incomeArr}
+                  transactions={transactions}
+                  currentYear={new Date().getFullYear()}
+                />
+
                 {/* <NetProfitChart
                   netProfitData={netProfitArr}
                   monthlyLabels={monthlyLabels}
@@ -2190,55 +2536,63 @@ function AppContent() {
             >
               <Plus className="w-6 h-6" />
             </button>
-            
+
             {/* Navigation Items */}
             <div className="grid grid-cols-4 px-2 py-3">
               <button
-                onClick={() => setActiveTab('overview')}
+                onClick={() => setActiveTab("overview")}
                 className={`flex flex-col items-center gap-1 py-2 rounded-lg transition-colors ${
-                  activeTab === 'overview' 
-                    ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-400' 
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  activeTab === "overview"
+                    ? "text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-400"
+                    : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
                 }`}
               >
                 <BarChart3 className="w-5 h-5" />
-                <span className="text-xs font-medium">Overview</span>
+                <span className="text-xs font-medium">
+                  Overview
+                </span>
               </button>
-              
+
               <button
-                onClick={() => setActiveTab('investment')}
+                onClick={() => setActiveTab("investment")}
                 className={`flex flex-col items-center gap-1 py-2 rounded-lg transition-colors ${
-                  activeTab === 'investment' 
-                    ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-400' 
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  activeTab === "investment"
+                    ? "text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-400"
+                    : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
                 }`}
               >
                 <TrendingUp className="w-5 h-5" />
-                <span className="text-xs font-medium">Investment</span>
+                <span className="text-xs font-medium">
+                  Investment
+                </span>
               </button>
-              
+
               <button
-                onClick={() => setActiveTab('analytic')}
+                onClick={() => setActiveTab("analytic")}
                 className={`flex flex-col items-center gap-1 py-2 rounded-lg transition-colors ${
-                  activeTab === 'analytic' 
-                    ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-400' 
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  activeTab === "analytic"
+                    ? "text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-400"
+                    : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
                 }`}
               >
                 <PieChart className="w-5 h-5" />
-                <span className="text-xs font-medium">Analytic</span>
+                <span className="text-xs font-medium">
+                  Analytic
+                </span>
               </button>
-              
+
               <button
-                onClick={() => setActiveTab('report')}
+                onClick={() => setActiveTab("report")}
                 className={`flex flex-col items-center gap-1 py-2 rounded-lg transition-colors ${
-                  activeTab === 'report' 
-                    ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-400' 
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  activeTab === "report"
+                    ? "text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-400"
+                    : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
                 }`}
               >
                 <FileText className="w-5 h-5" />
-                <span className="text-xs font-medium">Report</span>
+                <span className="text-xs font-medium">
+                  Report
+                </span>
               </button>
             </div>
           </div>
@@ -2259,16 +2613,109 @@ function AppContent() {
       <SettingsSheet
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+        defaultTab={settingsDefaultTab}
+        capitalItems={capitalItems}
+        onCapitalItemsChange={(items: CapitalItem[]) => {
+          console.log("[APP] onCapitalItemsChange called with:", items);
+          setCapitalItems(items);
+          localStorage.setItem("capital_items", JSON.stringify(items));
+          // Update total for backward compatibility
+          const total = items.reduce((sum: number, item: CapitalItem) => sum + item.amount, 0);
+          setModalM4(total);
+          localStorage.setItem("initialModal", String(total));
+          
+          // Save to backend
+          console.log("[APP] Saving capital_items to backend...");
+          apiFetch("/api/user_settings", {
+            method: "POST",
+            body: JSON.stringify({
+              capital_items: items,
+              initialModal: total, // backward compatibility
+            }),
+          })
+            .then((res) => {
+              console.log("[APP] Backend response:", res.status, res.ok);
+              if (res.ok) {
+                toast.success("Capital items updated!");
+                addNotification({
+                  type: "success",
+                  title: "Settings Updated",
+                  message: `Capital items saved successfully`,
+                });
+              } else {
+                toast.error("Failed to save to server");
+              }
+            })
+            .catch((e) => {
+              console.error("[APP] saveCapitalItems failed", e);
+              toast.error("Failed to save capital items to server");
+            });
+        }}
         initialModal={modalM4}
         roiTarget={roiTarget}
+        periode={periode}
+        residu={residu}
         projectName={projectName}
+        userName={user?.name}
+        userEmail={user?.email}
+        onLogout={logout}
+        onNavigateToPricing={() => {
+          setSettingsOpen(false);
+          setPricingPageOpen(true);
+        }}
         onModalChange={(value) => {
+          console.log("[APP] onModalChange called:", value);
           setModalM4(value);
           localStorage.setItem("initialModal", String(value));
+          
+          // Save to backend
+          console.log("[APP] Saving initialModal to backend...");
+          apiFetch("/api/user_settings", {
+            method: "POST",
+            body: JSON.stringify({ initialModal: value }),
+          })
+            .then((res) => {
+              console.log("[APP] initialModal saved:", res.ok);
+              if (res.ok) toast.success("Initial capital updated!");
+            })
+            .catch((e) => console.error("[APP] saveModal failed", e));
         }}
         onRoiTargetChange={(value) => {
+          console.log("[APP] onRoiTargetChange called:", value);
           setRoiTarget(value);
           localStorage.setItem("roiTarget", String(value));
+          
+          // Save to backend
+          console.log("[APP] Saving roiTarget to backend...");
+          apiFetch("/api/user_settings", {
+            method: "POST",
+            body: JSON.stringify({ roiTarget: value }),
+          })
+            .then((res) => {
+              console.log("[APP] roiTarget saved:", res.ok);
+              if (res.ok) toast.success("ROI target updated!");
+            })
+            .catch((e) => console.error("[APP] saveRoiTarget failed", e));
+        }}
+        onPeriodeChange={(value) => {
+          setPeriode(value);
+          localStorage.setItem("periode", String(value));
+          
+          // Save to backend
+          apiFetch("/api/user_settings", {
+            method: "POST",
+            body: JSON.stringify({ periode: value }),
+          }).catch((e) => console.error("[APP] savePeriode failed", e));
+        }}
+        onResiduChange={(value) => {
+          setResidu(value);
+          localStorage.setItem("residu", String(value));
+          
+          // Save to backend
+          apiFetch("/api/user_settings", {
+            method: "POST",
+            body: JSON.stringify({ residu: value }),
+          }).catch((e) => console.error("[APP] saveResidu failed", e));
         }}
         onProjectNameChange={(value) => {
           console.log(
@@ -2309,6 +2756,15 @@ function AppContent() {
         open={notificationPanelOpen}
         onOpenChange={setNotificationPanelOpen}
       />
+
+      {/* Pricing Page */}
+      <PricingPage
+        open={pricingPageOpen}
+        onBack={() => setPricingPageOpen(false)}
+      />
+
+      {/* Premium Modal */}
+      <PremiumModal />
 
       {/* Toast Notifications */}
       <Toaster />

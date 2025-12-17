@@ -65,7 +65,11 @@
     host: "m4.localhost.com",
     port: 5173,
     proxy: {
-      '/api': 'http://127.0.0.1:8124'
+      '/api': {
+        target: 'http://127.0.0.1:8124',
+        changeOrigin: true,
+        secure: false,
+      }
     },
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin-allow-popups",

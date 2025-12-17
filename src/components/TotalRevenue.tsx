@@ -2,36 +2,86 @@ import { useState, useMemo, useEffect } from "react";
 import { HandCoins, Eye, EyeOff, Settings } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { useCurrency } from "../contexts/CurrencyContext";
+
+interface CapitalItem {
+  id: string;
+  name: string;
+  amount: number;
+  depreciable: boolean;
+  periode?: number;
+  residu?: number;
+}
 
 interface TotalRevenueProps {
   lifetimeRevenue: number;
-  initialModal?: number;
-  onModalChange?: (value: number) => void;
+  lifetimeExpenses?: number;
+  lifetimeDepreciation?: number;
+  lifetimeNetProfit?: number;
+  capitalItems?: CapitalItem[];
+  initialModal?: number; // Backward compatibility
   roiTarget?: number;
-}
-
-function fmtIDR(v: number) {
-  return new Intl.NumberFormat("id-ID").format(Math.round(v));
+  onOpenSettings?: () => void;
+  totalExpenses?: number; // Deprecated - use lifetimeExpenses
+  periode?: number; // Backward compatibility
+  residu?: number; // Backward compatibility
 }
 
 export function TotalRevenue({
   lifetimeRevenue,
+  lifetimeExpenses = 0,
+  lifetimeDepreciation = 0,
+  lifetimeNetProfit = 0,
+  capitalItems,
   initialModal = 25000000,
-  onModalChange,
   roiTarget = 2000,
+  onOpenSettings,
+  totalExpenses = 0, // Deprecated
+  periode = 12,
+  residu = 5000000,
 }: TotalRevenueProps) {
-  const [modalM4, setModalM4] = useState<number>(initialModal);
-  const [isEditingModal, setIsEditingModal] =
-    useState<boolean>(false);
-  const [modalInput, setModalInput] = useState<string>(
-    String(initialModal),
-  );
+  const { formatCurrency, getCurrencySymbol } = useCurrency();
+  
   const [showLifetime, setShowLifetime] =
     useState<boolean>(true);
   const [isDesktop, setIsDesktop] = useState<boolean>(
     typeof window !== "undefined" && window.innerWidth >= 768,
   );
+
+  // Calculate total initial capital from capital items
+  const initialCapital = useMemo(() => {
+    if (capitalItems && capitalItems.length > 0) {
+      return capitalItems.reduce((sum, item) => sum + item.amount, 0);
+    }
+    return initialModal; // Fallback to old prop
+  }, [capitalItems, initialModal]);
+
+  // Calculate total monthly depreciation from depreciable assets
+  const depreciationValue = useMemo(() => {
+    // Use lifetime depreciation from backend if available
+    if (lifetimeDepreciation > 0) {
+      return lifetimeDepreciation;
+    }
+    
+    // Fallback: Calculate monthly depreciation (deprecated)
+    if (capitalItems && capitalItems.length > 0) {
+      return capitalItems.reduce((sum, item) => {
+        if (item.depreciable && item.periode && item.periode > 0) {
+          const monthly = (item.amount - (item.residu || 0)) / item.periode;
+          return sum + monthly;
+        }
+        return sum;
+      }, 0);
+    }
+    // Fallback to old calculation
+    if (periode > 0) {
+      return (initialModal - residu) / periode;
+    }
+    return 0;
+  }, [lifetimeDepreciation, capitalItems, initialModal, residu, periode]);
+
+  // Use lifetime expenses from backend if available, otherwise fallback to prop
+  const totalExpensesValue = lifetimeExpenses > 0 ? lifetimeExpenses : totalExpenses;
 
   // Track screen size for responsive behavior
   useEffect(() => {
@@ -43,18 +93,40 @@ export function TotalRevenue({
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Sync internal state when prop changes
+  // Debug log ROI calculations
   useEffect(() => {
-    setModalM4(initialModal);
-    setModalInput(String(initialModal));
-  }, [initialModal]);
+    console.log('[TotalRevenue] ROI Target:', roiTarget + '%');
+    console.log('[TotalRevenue] Initial Capital:', initialCapital);
+    console.log('[TotalRevenue] Lifetime Revenue:', lifetimeRevenue);
+    console.log('[TotalRevenue] Lifetime Expenses:', totalExpensesValue);
+    console.log('[TotalRevenue] Lifetime Depreciation:', depreciationValue);
+    
+    if (capitalItems && capitalItems.length > 0) {
+      console.log('[TotalRevenue] Capital Items:', capitalItems);
+    }
+    
+    // CORRECTED FORMULA (Accounting-based):
+    // Net Profit = Revenue - OPEX - Depreciation
+    // ROI = (Net Profit / Initial Capital) * 100
+    // Investment is NOT subtracted (it's capital movement, not expense)
+    const netProfit = lifetimeRevenue - totalExpensesValue - depreciationValue;
+    const calculatedROI = initialCapital > 0 
+      ? (netProfit / initialCapital) * 100 
+      : 0;
+    console.log('[TotalRevenue] Net Profit:', netProfit);
+    console.log('[TotalRevenue] Calculated ROI:', Math.round(calculatedROI) + '%');
+    console.log('[TotalRevenue] Formula: (Revenue - OPEX - Depreciation) / Initial Capital × 100');
+    console.log('[TotalRevenue] NOTE: Investment tidak dikurangkan (bukan expense)');
+  }, [roiTarget, initialCapital, lifetimeRevenue, totalExpensesValue, depreciationValue, capitalItems]);
 
   const roiPercentage = useMemo(() => {
-    if (!modalM4 || modalM4 <= 0) return 0;
-    const profit = lifetimeRevenue - modalM4;
-    if (profit <= 0) return 0;
-    return (profit / modalM4) * 100;
-  }, [lifetimeRevenue, modalM4]);
+    if (!initialCapital || initialCapital <= 0) return 0;
+    // CORRECTED FORMULA:
+    // Net Profit = Revenue - OPEX - Depreciation (Investment NOT subtracted)
+    // ROI = (Net Profit / Initial Capital) × 100%
+    const netProfit = lifetimeRevenue - totalExpensesValue - depreciationValue;
+    return (netProfit / initialCapital) * 100;
+  }, [lifetimeRevenue, initialCapital, depreciationValue, totalExpensesValue]);
 
   const roiProgressPct =
     (Math.min(roiPercentage, roiTarget) / roiTarget) * 100;
@@ -107,9 +179,10 @@ export function TotalRevenue({
                 style={{
                   fontSize: "1.875rem",
                   lineHeight: "2.25rem",
+                  fontWeight: 700,
                 }}
               >
-                Rp {fmtIDR(lifetimeRevenue)}
+                {formatCurrency(lifetimeRevenue)}
               </p>
             ) : (
               <p
@@ -117,6 +190,7 @@ export function TotalRevenue({
                 style={{
                   fontSize: "1.875rem",
                   lineHeight: "2.25rem",
+                  fontWeight: 700,
                 }}
               >
                 ••••••••
@@ -130,19 +204,16 @@ export function TotalRevenue({
                   className="flex items-center gap-2 text-gray-600"
                   style={{ fontSize: "0.875rem" }}
                 >
-                  <span>modal</span>
+                  <span>Initial : </span>
                   <span
                     className="text-gray-900"
-                    style={{ fontWeight: 600 }}
+                    style={{ fontWeight: 700 }}
                   >
-                    Rp {fmtIDR(modalM4)}
+                    {formatCurrency(initialCapital)}
                   </span>
                   <button
                     className="text-gray-400"
-                    onClick={() => {
-                      setModalInput(String(modalM4));
-                      setIsEditingModal(true);
-                    }}
+                    onClick={onOpenSettings}
                     style={{
                       marginLeft: "0.25rem",
                       cursor: "pointer",
@@ -284,52 +355,6 @@ export function TotalRevenue({
               Target ROI: {roiTarget}%
             </span>
             <span>{roiTarget}%</span>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Editor Inline */}
-      {isEditingModal && (
-        <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <p
-            className="text-gray-900 mb-2"
-            style={{ fontSize: "0.875rem", fontWeight: 500 }}
-          >
-            Edit Modal Awal
-          </p>
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              value={modalInput}
-              onChange={(e) => setModalInput(e.target.value)}
-              className="bg-white border-gray-200"
-              placeholder="Masukkan modal"
-            />
-            <Button
-              onClick={() => {
-                const parsed = Number(modalInput || 0);
-                if (!isNaN(parsed) && parsed > 0) {
-                  setModalM4(parsed);
-                  if (onModalChange) {
-                    onModalChange(parsed);
-                  }
-                }
-                setIsEditingModal(false);
-              }}
-              style={{
-                background:
-                  "linear-gradient(to right, #3b82f6, #9333ea)",
-                color: "white",
-              }}
-            >
-              Save
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => setIsEditingModal(false)}
-            >
-              Cancel
-            </Button>
           </div>
         </div>
       )}

@@ -18,6 +18,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useNotifications } from "../contexts/NotificationContext";
+import { apiFetch } from "../lib/api";
 import { Upload } from "lucide-react";
 import Papa from "papaparse";
 import { toast } from "sonner";
@@ -98,7 +99,7 @@ export function TransactionDialog({
   useEffect(() => {
     (async () => {
       try {
-        const m = await fetch("/api/me", { credentials: "include" })
+        const m = await apiFetch("/api/me")
           .then(r => r.json())
           .catch(() => null);
         setMe(m);
@@ -305,9 +306,8 @@ export function TransactionDialog({
     }
 
     try {
-      const res = await fetch("/api/add_transaction", {
+      const res = await apiFetch("/api/add_transaction", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
@@ -347,9 +347,8 @@ export function TransactionDialog({
             date,
             note: note || "",
           };
-          const r2 = await fetch("/api/add_crypto_buy", {
+          const r2 = await apiFetch("/api/add_crypto_buy", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(cryptoBody),
           });
           if (!r2.ok) {
@@ -390,7 +389,7 @@ export function TransactionDialog({
   // fetch product list from backend
   const fetchProductList = async () => {
     try {
-      const r = await fetch("/api/product_list");
+      const r = await apiFetch("/api/product_list");
       if (!r.ok) return setProductList([]);
       const j = await r.json();
       setProductList(Array.isArray(j) ? j : []);
@@ -671,7 +670,7 @@ export function TransactionDialog({
           };
         });
 
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/import_combined?mode=${importMode}`,
         {
           method: "POST",
@@ -703,6 +702,15 @@ export function TransactionDialog({
 
   // Generic importer fallback — gunakan previewRows atau parsed JSON file
   const doImportGeneric = async () => {
+    console.log("\n" + "=".repeat(60));
+    console.log("🚀 IMPORT JSON FUNCTION CALLED");
+    console.log("=".repeat(60));
+    console.log("  Import Type:", importType);
+    console.log("  Import File:", importFile?.name, importFile?.size, "bytes");
+    console.log("  Import Mode:", importMode);
+    console.log("  Preview Rows:", previewRows?.length || 0);
+    console.log("=".repeat(60));
+    
     setImportLoading(true);
     setImportError(null);
     try {
@@ -754,12 +762,30 @@ export function TransactionDialog({
             payload.cashflow = j.cashflow;
           else if (Array.isArray(j)) payload.cashflow = j;
           else throw new Error("JSON not in expected shape");
+          
+          // Include crypto if present
+          if (j.crypto) payload.crypto = j.crypto;
+          
+          // Include products if present
+          if (Array.isArray(j.products)) {
+            payload.products = j.products;
+          }
         } else {
           throw new Error("No file selected");
         }
       }
 
-      const res = await fetch(
+      console.log("\n📦 PAYLOAD PREPARED");
+      console.log("  Cashflow items:", payload.cashflow?.length || 0);
+      console.log("  Crypto exists:", !!payload.crypto);
+      console.log("  Products items:", payload.products?.length || 0);
+      console.log("  First transaction:", payload.cashflow?.[0]);
+      
+      console.log("\n📡 CALLING API: /api/import_combined");
+      console.log("  URL:", `/api/import_combined?mode=${importMode}`);
+      console.log("  Method: POST");
+
+      const res = await apiFetch(
         `/api/import_combined?mode=${importMode}`,
         {
           method: "POST",
@@ -767,11 +793,26 @@ export function TransactionDialog({
           body: JSON.stringify(payload),
         },
       );
+      
+      console.log("\n✅ API RESPONSE RECEIVED");
+      console.log("  Status:", res.status);
+      console.log("  OK:", res.ok);
+      
       const j = await res.json();
+      console.log("  Response data:", j);
+      
       if (!res.ok) throw new Error(j?.error || "Import failed");
       
       const successCount = payload.cashflow ? payload.cashflow.length : 0;
-      window.dispatchEvent(new Event("transaction:added"));
+      console.log("\n🎉 IMPORT SUCCESS!");
+      console.log("  Imported:", successCount, "transactions");
+      console.log("=".repeat(60) + "\n");
+      
+      // Dispatch bulk import event to trigger full data reload
+      window.dispatchEvent(new CustomEvent("transaction:bulk-imported", { 
+        detail: { count: successCount } 
+      }));
+      
       toast.success(`JSON imported successfully! (${successCount} transactions)`);
       addNotification({
         type: 'success',
@@ -782,8 +823,15 @@ export function TransactionDialog({
       setImportFile(null);
       setPreviewRows([]);
     } catch (err: any) {
+      console.error("\n❌ IMPORT FAILED");
+      console.error("=".repeat(60));
+      console.error("  Error type:", err?.constructor?.name);
+      console.error("  Error message:", err?.message);
+      console.error("  Full error:", err);
+      console.error("=".repeat(60) + "\n");
       setImportError(err?.message || String(err));
     } finally {
+      console.log("🏁 Import process ended\n");
       setImportLoading(false);
     }
   };
@@ -879,7 +927,7 @@ export function TransactionDialog({
                     <Input
                       id="tx-stream"
                       type="text"
-                      placeholder="LINE, Etsy, Shopee, dll"
+                      placeholder="Streamline"
                       value={stream}
                       onChange={(e) =>
                         setStream(e.target.value)

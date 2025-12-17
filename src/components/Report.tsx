@@ -112,7 +112,7 @@ function monthLabel(yyyy_mm: string) {
   return dt.toLocaleString('id-ID', { month: 'long', year: 'numeric' });
 }
 
-const Report = forwardRef<ReportRef, ReportProps>(({ transactions = [], projectName = 'M4 Tracking' }, ref) => {
+const Report = forwardRef<ReportRef, ReportProps>(({ transactions = [], projectName = 'M4 ROI' }, ref) => {
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const reportRef = useRef<HTMLDivElement | null>(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
@@ -121,6 +121,19 @@ const Report = forwardRef<ReportRef, ReportProps>(({ transactions = [], projectN
   const [isDesktop, setIsDesktop] = useState<boolean>(
     typeof window !== 'undefined' && window.innerWidth >= 768
   );
+  const [monthlyDepreciation, setMonthlyDepreciation] = useState<number>(0);
+
+  // Fetch monthly depreciation from API
+  React.useEffect(() => {
+    fetch('/api/monthly')
+      .then(res => res.json())
+      .then(data => {
+        console.log('[Report] API Response:', data);
+        console.log('[Report] Monthly Depreciation:', data.monthly_depreciation);
+        setMonthlyDepreciation(data.monthly_depreciation || 0);
+      })
+      .catch(err => console.error('Failed to fetch monthly depreciation:', err));
+  }, []);
 
   // Track screen size for responsive behavior
   React.useEffect(() => {
@@ -183,10 +196,25 @@ const Report = forwardRef<ReportRef, ReportProps>(({ transactions = [], projectN
     const income = monthlyData.reduce((s, m) => s + m.income, 0);
     const expense = monthlyData.reduce((s, m) => s + m.expense, 0);
     const investment = monthlyData.reduce((s, m) => s + m.investment, 0);
-    const net = income - expense - investment;
+    
+    // Count months with activity for depreciation calculation
+    const activeMonths = monthlyData.filter(m => m.income > 0 || m.expense > 0).length;
+    
+    // CORRECTED: Net Profit = Income - Expense - Depreciation
+    // Depreciation deducted for all active months in the year
+    const net = income - expense - (monthlyDepreciation * activeMonths);
+
+    console.log('[Report yearTotals]', {
+      income,
+      expense,
+      monthlyDepreciation,
+      activeMonths,
+      totalDepreciation: monthlyDepreciation * activeMonths,
+      net
+    });
 
     return { income, expense, investment, net };
-  }, [monthlyData]);
+  }, [monthlyData, monthlyDepreciation]);
 
   // Pie data - use year totals instead of current month for better visibility
   const pieChartData = useMemo(() => {
@@ -493,7 +521,11 @@ const Report = forwardRef<ReportRef, ReportProps>(({ transactions = [], projectN
     // Table Body
     monthlyData.forEach((m, idx) => {
       const monthName = new Date(year, idx, 1).toLocaleString('en-US', { month: 'short' });
-      const net = m.income - m.expense - m.investment;
+      
+      // CORRECTED: Net Profit = Income - Expense - Depreciation
+      // Depreciation deducted per month if there's activity
+      const hasActivity = m.income > 0 || m.expense > 0;
+      const net = m.income - m.expense - (hasActivity ? monthlyDepreciation : 0);
       
       // Alternating row colors
       if (idx % 2 === 0) {
@@ -536,7 +568,7 @@ const Report = forwardRef<ReportRef, ReportProps>(({ transactions = [], projectN
     doc.text(`Page 1 of 1`, pageWidth - 14, footerY + 5, { align: 'right' });
     
     doc.setFontSize(6);
-    doc.text(`© ${new Date().getFullYear()} BUKABOX M4 Tracking system. All rights reserved.`, pageWidth / 2, footerY + 8, { align: 'center' });
+    doc.text(`© ${new Date().getFullYear()} BUKABOX M4 ROI system. All rights reserved.`, pageWidth / 2, footerY + 8, { align: 'center' });
 
     doc.save(`${projectName.replace(/\s+/g, '-')}-Annual-Report-${year}.pdf`);
   }
@@ -584,7 +616,10 @@ const Report = forwardRef<ReportRef, ReportProps>(({ transactions = [], projectN
       const totalIncome = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
       const totalExpense = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
       const totalInvest = txs.filter(t => t.type === 'investment').reduce((s, t) => s + t.amount, 0);
-      const monthNet = totalIncome - totalExpense - totalInvest;
+      
+      // CORRECTED: Net Profit = Income - Expense - Depreciation
+      const hasActivity = totalIncome > 0 || totalExpense > 0;
+      const monthNet = totalIncome - totalExpense - (hasActivity ? monthlyDepreciation : 0);
 
       // Section: Monthly Summary
       doc.setFontSize(11);
@@ -747,7 +782,7 @@ const Report = forwardRef<ReportRef, ReportProps>(({ transactions = [], projectN
       doc.text(`Page ${pageNum} of ${grouped.length}`, pageWidth - 14, footerY + 5, { align: 'right' });
       
       doc.setFontSize(6);
-      doc.text(`© ${new Date().getFullYear()} BUKABOX M4 Tracking system. All rights reserved.`, pageWidth / 2, footerY + 8, { align: 'center' });
+      doc.text(`© ${new Date().getFullYear()} BUKABOX M4 ROI system. All rights reserved.`, pageWidth / 2, footerY + 8, { align: 'center' });
     });
 
     doc.save(`${projectName.replace(/\s+/g, '-')}-Monthly-Report-${year}.pdf`);

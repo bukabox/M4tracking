@@ -1,6 +1,7 @@
 // /components/PortfolioChart-lokal.tsx - Compact version for MetricCard slot (Props-based)
 import { useMemo } from "react";
 import { Card } from './ui/card';
+import { useCurrency } from '../contexts/CurrencyContext';
 import {
   ResponsiveContainer,
   LineChart,
@@ -60,6 +61,7 @@ function yearMonths(year?: number) {
 }
 
 export function PortfolioChart({ transactions }: PortfolioChartProps) {
+  const { formatCurrency } = useCurrency();
   const currentYear = new Date().getFullYear();
   const months = useMemo(() => yearMonths(currentYear), [currentYear]);
 
@@ -212,7 +214,7 @@ export function PortfolioChart({ transactions }: PortfolioChartProps) {
               }} 
             />
             <Tooltip
-              formatter={(value: number, name: string) => [`Rp ${Number(value).toLocaleString('id-ID')}`, String(name)]}
+              formatter={(value: number, name: string) => [formatCurrency(Number(value)), String(name)]}
               contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 11 }}
             />
 

@@ -2,12 +2,14 @@ import { AlertCircle, Database, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { useState, useEffect } from 'react';
 import { mockDataService } from '../services/mockData';
+import { useCurrency } from '../contexts/CurrencyContext';
 
 interface MockDataBannerProps {
   onReload?: () => void;
 }
 
 export function MockDataBanner({ onReload }: MockDataBannerProps) {
+  const { formatCurrency } = useCurrency();
   const [dismissed, setDismissed] = useState(false);
   const [stats, setStats] = useState({
     transactions: 0,
@@ -61,7 +63,7 @@ export function MockDataBanner({ onReload }: MockDataBannerProps) {
         </div>
         
         <p className="text-sm text-blue-700 mb-2">
-          Backend tidak tersedia. Aplikasi menampilkan <strong>{stats.transactions} sample transactions</strong> dengan total income <strong>Rp {new Intl.NumberFormat('id-ID').format(stats.income)}</strong>.
+          Backend tidak tersedia. Aplikasi menampilkan <strong>{stats.transactions} sample transactions</strong> dengan total income <strong>{formatCurrency(stats.income)}</strong>.
         </p>
         
         <div className="flex items-center gap-2 text-xs text-blue-600">

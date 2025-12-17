@@ -1,10 +1,7 @@
-// SettingsSheet-lokal.tsx
 import { useState, useEffect, useMemo } from "react";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
-import { useCurrency } from "../contexts/CurrencyContext";
-import { useAutoBackup } from "../hooks/useAutoBackup";
 import {
   DollarSign,
   Moon,
@@ -32,11 +29,9 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { useLanguage } from "../contexts/LanguageContext";
+import { useCurrency } from "../contexts/CurrencyContext";
 import { useNotifications } from "../contexts/NotificationContext";
-import { useAuthOptional } from "../contexts/AuthContext";
-import { useFeatureLock } from "../contexts/FeatureLockContext";
-import { apiFetch } from "../lib/api";
-
+import { useFeatureLock, type UserRole } from "../contexts/FeatureLockContext";
 import { toast } from "sonner";
 import { ConfirmationDialog } from "./ConfirmationDialog";
 import { CapitalItemsDialog, type CapitalItem } from "./CapitalItemsDialog";
@@ -73,18 +68,18 @@ export function SettingsSheet({
   onCapitalItemsChange,
   initialModal,
   onModalChange,
-  roiTarget,
+  roiTarget = 200,
   onRoiTargetChange,
-  projectName,
+  projectName = "M4 Tracking",
   onProjectNameChange,
   userName,
   userEmail,
   onLogout,
   onNavigateToPricing,
-  defaultTab = "finance", // Default to finance tab (UI-only, not data)
-  periode,
+  defaultTab = "finance", // Default to finance tab
+  periode = 12,
   onPeriodeChange,
-  residu,
+  residu = 5000000,
   onResiduChange,
 }: SettingsSheetProps) {
   const {
@@ -92,20 +87,18 @@ export function SettingsSheet({
     language: currentLanguage,
     setLanguage: setGlobalLanguage,
   } = useLanguage();
-  
+
   const {
     currency: globalCurrency,
     setCurrency: setGlobalCurrency,
     exchangeRates: globalRates,
     setExchangeRates: setGlobalRates,
   } = useCurrency();
-  
+
   const { addNotification } = useNotifications();
-  const { logout: authLogout } = useAuthOptional();
-  const { userRole, isMaster, setUserRole, setIsMaster } = useFeatureLock();
-  
+  const { userRole, isMaster } = useFeatureLock();
   const [projectNameInput, setProjectNameInput] =
-    useState<string>(projectName || "M4 Tracking");
+    useState<string>(projectName);
   const [modalInput, setModalInput] = useState<string>(
     String(initialModal),
   );
@@ -119,8 +112,11 @@ export function SettingsSheet({
     String(residu),
   );
   const [themeMode, setThemeMode] = useState<ThemeMode>("auto");
-  const [loadingRates, setLoadingRates] = useState<boolean>(false);
-  const [ratesError, setRatesError] = useState<string | null>(null);
+  const [loadingRates, setLoadingRates] =
+    useState<boolean>(false);
+  const [ratesError, setRatesError] = useState<string | null>(
+    null,
+  );
   const [localLanguage, setLocalLanguage] =
     useState<string>("id");
   const [notifications, setNotifications] =
@@ -130,17 +126,6 @@ export function SettingsSheet({
   const [activeTab, setActiveTab] =
     useState<SettingsTab>(defaultTab);
   const [showEmail, setShowEmail] = useState<boolean>(false);
-
-  // --- New: auth states fetched from backend /api/me ---
-  const [authName, setAuthName] = useState<string | null>(null);
-  const [authEmail, setAuthEmail] = useState<string | null>(
-    null,
-  );
-  const [authPicture, setAuthPicture] = useState<string | null>(
-    null,
-  );
-  const [loadingAuth, setLoadingAuth] =
-    useState<boolean>(false);
   
   // Confirmation dialogs state
   const [showEraseDialog, setShowEraseDialog] = useState<boolean>(false);
@@ -154,26 +139,6 @@ export function SettingsSheet({
     }
     return initialModal; // Fallback to old single modal value
   }, [capitalItems, initialModal]);
-
-  // Auto backup hook with notification callback
-  const { performBackup, getLastBackupTime } = useAutoBackup(
-    autoBackup,
-    (success, message) => {
-      if (success) {
-        addNotification({
-          type: "success",
-          title: "Auto Backup Complete",
-          message: message || "Your data has been backed up successfully",
-        });
-      } else {
-        addNotification({
-          type: "error",
-          title: "Backup Failed",
-          message: message || "Failed to create backup",
-        });
-      }
-    }
-  );
 
   // Calculate depreciation value: Sum of all depreciable assets
   const depreciationValue = useMemo(() => {
@@ -227,50 +192,73 @@ export function SettingsSheet({
   const fetchExchangeRates = async () => {
     setLoadingRates(true);
     setRatesError(null);
-    
+
     try {
       // Using free exchangerate-api.com - fetch USD as base, then convert to IDR
-      const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
-      
+      const response = await fetch(
+        "https://api.exchangerate-api.com/v4/latest/USD",
+      );
+
       if (!response.ok) {
-        throw new Error('Failed to fetch exchange rates');
+        throw new Error("Failed to fetch exchange rates");
       }
-      
+
       const data = await response.json();
-      
+
       // data.rates.IDR = how many IDR for 1 USD
       // Example: { USD: 1, IDR: 16668.25, EUR: 0.94, SGD: 1.34 }
       const usdToIdr = data.rates.IDR || 16668;
       const usdToEur = data.rates.EUR || 0.94;
       const usdToSgd = data.rates.SGD || 1.34;
-      
+
       // Calculate: 1 EUR = (1/usdToEur) USD * usdToIdr IDR
       const rates = {
         IDR: 1,
-        USD: Math.round(usdToIdr * 100) / 100,  // 1 USD = X IDR (keep 2 decimals)
-        EUR: Math.round((usdToIdr / usdToEur) * 100) / 100,  // 1 EUR = X IDR
-        SGD: Math.round((usdToIdr / usdToSgd) * 100) / 100,  // 1 SGD = X IDR
+        USD: Math.round(usdToIdr * 100) / 100, // 1 USD = X IDR (keep 2 decimals)
+        EUR: Math.round((usdToIdr / usdToEur) * 100) / 100, // 1 EUR = X IDR
+        SGD: Math.round((usdToIdr / usdToSgd) * 100) / 100, // 1 SGD = X IDR
       };
-      
+
       // Update global context
       setGlobalRates(rates);
-      localStorage.setItem('exchangeRates', JSON.stringify(rates));
-      localStorage.setItem('exchangeRatesTimestamp', String(Date.now()));
-      console.log('[SettingsSheet] Exchange rates updated (real-time):', rates);
-      console.log(`[SettingsSheet] 1 USD = Rp ${rates.USD.toLocaleString('id-ID')}`);
+      localStorage.setItem(
+        "exchangeRates",
+        JSON.stringify(rates),
+      );
+      localStorage.setItem(
+        "exchangeRatesTimestamp",
+        String(Date.now()),
+      );
+      console.log(
+        "[SettingsSheet] Exchange rates updated (real-time):",
+        rates,
+      );
+      console.log(
+        `[SettingsSheet] 1 USD = Rp ${rates.USD.toLocaleString("id-ID")}`,
+      );
     } catch (error) {
-      console.error('[SettingsSheet] Failed to fetch exchange rates:', error);
-      setRatesError('Failed to load live rates. Using fallback.');
-      
+      console.error(
+        "[SettingsSheet] Failed to fetch exchange rates:",
+        error,
+      );
+      setRatesError(
+        "Failed to load live rates. Using fallback.",
+      );
+
       // Try to load from localStorage cache
-      const cached = localStorage.getItem('exchangeRates');
+      const cached = localStorage.getItem("exchangeRates");
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
           setGlobalRates(parsed);
-          console.log('[SettingsSheet] Using cached rates:', parsed);
+          console.log(
+            "[SettingsSheet] Using cached rates:",
+            parsed,
+          );
         } catch (e) {
-          console.warn('[SettingsSheet] Failed to parse cached rates, using defaults');
+          console.warn(
+            "[SettingsSheet] Failed to parse cached rates, using defaults",
+          );
         }
       }
     } finally {
@@ -284,77 +272,37 @@ export function SettingsSheet({
       const savedThemeMode = (localStorage.getItem(
         "themeMode",
       ) || "auto") as ThemeMode;
+      const savedCurrency =
+        localStorage.getItem("currency") || "IDR";
       const savedNotifications =
         localStorage.getItem("notifications") !== "false";
       const savedAutoBackup =
         localStorage.getItem("autoBackup") === "true";
 
       setThemeMode(savedThemeMode);
-      applyTheme(savedThemeMode); // Apply theme immediately after loading
       setLocalLanguage(currentLanguage);
       setNotifications(savedNotifications);
       setAutoBackup(savedAutoBackup);
-      setProjectNameInput(projectName || "M4 Tracking");
+      setProjectNameInput(projectName);
       setModalInput(String(initialModal));
       setRoiInput(String(roiTarget));
       setPeriodeInput(String(periode));
       setResiduInput(String(residu));
-      setHasChanges(false);
-      setActiveTab(defaultTab);
 
       // Fetch exchange rates
       fetchExchangeRates();
-
-      // Fetch authenticated user info from backend
-      // backend exposes /api/me (see main.py)
-      (async () => {
-        setLoadingAuth(true);
-        try {
-          const res = await fetch("/api/me", {
-            method: "GET",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-          });
-          if (res.ok) {
-            const j = await res.json();
-            // j: { sub, email, name, is_master, role }
-            setAuthName(j.name || null);
-            setAuthEmail(j.email || null);
-            // Note: /api/me doesn't return picture currently, but /api/auth/google response has picture.
-            // If you want picture in /api/me, add it in backend.
-            setAuthPicture((j as any).picture || null);
-            // Set user role and master status
-            setIsMaster(j.is_master === true);
-            setUserRole(j.role || null);
-          } else {
-            // not authenticated or session expired - clear auth states
-            setAuthName(null);
-            setAuthEmail(null);
-            setAuthPicture(null);
-            setIsMaster(false);
-            setUserRole(null);
-          }
-        } catch (e) {
-          console.warn("Failed fetching /api/me", e);
-          setAuthName(null);
-          setAuthEmail(null);
-          setAuthPicture(null);
-          setIsMaster(false);
-          setUserRole(null);
-        } finally {
-          setLoadingAuth(false);
-        }
-      })();
+      setActiveTab(defaultTab); // Set active tab based on defaultTab prop
+      setHasChanges(false);
     }
   }, [
     open,
     initialModal,
     roiTarget,
-    periode,
-    residu,
     currentLanguage,
     projectName,
-    defaultTab,
+    defaultTab, // Add defaultTab to dependencies
+    periode,
+    residu,
   ]);
 
   // Listen to system theme changes when in auto mode
@@ -386,29 +334,23 @@ export function SettingsSheet({
     setHasChanges(true);
     applyTheme(mode);
     localStorage.setItem("themeMode", mode);
-    
-    // Notify App.tsx about theme change
-    window.dispatchEvent(new Event('themeChanged'));
   };
 
-  const handleLanguageChange = (lang: string) => {
-    setLocalLanguage(lang);
-    setGlobalLanguage(lang as "id" | "en"); // Apply immediately for instant preview
-    setHasChanges(true);
-  };
-
-  // Individual handlers for each setting
   const handleSaveProjectName = async () => {
     if (projectNameInput.trim()) {
       onProjectNameChange?.(projectNameInput.trim());
-      localStorage.setItem("projectName", projectNameInput.trim());
+      localStorage.setItem(
+        "projectName",
+        projectNameInput.trim(),
+      );
       setHasChanges(false);
-      toast.success("Project name updated!");
 
-      // Save to backend for per-user persistence
+      // optional server save (if not handled by parent)
       try {
-        await apiFetch("/api/user_settings", {
+        await fetch("/api/user_settings", {
           method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             projectName: projectNameInput.trim(),
           }),
@@ -430,7 +372,7 @@ export function SettingsSheet({
   const handleSaveModal = () => {
     const parsed = Number(modalInput || 0);
     if (!isNaN(parsed) && parsed > 0) {
-      onModalChange(parsed);
+      onModalChange(parsed); // This will trigger parent callback and save to localStorage
       localStorage.setItem("initialModal", String(parsed));
       setHasChanges(false);
       toast.success("Initial modal updated!");
@@ -439,19 +381,13 @@ export function SettingsSheet({
         title: "Settings Updated",
         message: `Initial modal changed to ${new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(parsed)}`,
       });
-
-      // Save to backend for per-user persistence
-      apiFetch("/api/user_settings", {
-        method: "POST",
-        body: JSON.stringify({ initialModal: parsed }),
-      }).catch(e => console.warn("Failed saving to server", e));
     }
   };
 
   const handleResetModal = () => {
     const defaultModal = 25000000;
     setModalInput(String(defaultModal));
-    onModalChange(defaultModal);
+    onModalChange(defaultModal); // This will trigger parent callback
     localStorage.setItem("initialModal", String(defaultModal));
     setHasChanges(false);
   };
@@ -459,7 +395,7 @@ export function SettingsSheet({
   const handleSaveRoiTarget = () => {
     const parsed = Number(roiInput || 0);
     if (!isNaN(parsed) && parsed > 0) {
-      onRoiTargetChange?.(parsed);
+      onRoiTargetChange?.(parsed); // This will trigger parent callback and save to localStorage
       localStorage.setItem("roiTarget", String(parsed));
       setHasChanges(false);
       toast.success("ROI target updated!");
@@ -468,252 +404,144 @@ export function SettingsSheet({
         title: "Settings Updated",
         message: `ROI target changed to ${parsed}%`,
       });
-
-      // Save to backend for per-user persistence
-      apiFetch("/api/user_settings", {
-        method: "POST",
-        body: JSON.stringify({ roiTarget: parsed }),
-      }).catch(e => console.warn("Failed saving to server", e));
     }
   };
 
   const handleResetRoiTarget = () => {
     const defaultRoiTarget = 200;
     setRoiInput(String(defaultRoiTarget));
-    onRoiTargetChange?.(defaultRoiTarget);
+    onRoiTargetChange?.(defaultRoiTarget); // This will trigger parent callback
     localStorage.setItem("roiTarget", String(defaultRoiTarget));
     setHasChanges(false);
   };
 
-  const handleSavePeriode = () => {
-    const parsed = Number(periodeInput || 0);
-    if (!isNaN(parsed) && parsed > 0) {
-      onPeriodeChange?.(parsed);
-      localStorage.setItem("periode", String(parsed));
-      setHasChanges(false);
-      toast.success("Periode updated!");
+  const handleSaveSettings = () => {
+    // Currency is already managed by CurrencyContext and saved to localStorage
+    // when changed, so no need to save it here again
+    
+    if (localLanguage !== currentLanguage) {
+      setGlobalLanguage(localLanguage as "id" | "en");
       addNotification({
-        type: "success",
-        title: "Settings Updated",
-        message: `Periode changed to ${parsed} bulan`,
+        type: "info",
+        title: "Language Changed",
+        message: `Language changed to ${localLanguage === "id" ? "Indonesian" : "English"}`,
       });
-
-      // Save to backend for per-user persistence
-      apiFetch("/api/user_settings", {
-        method: "POST",
-        body: JSON.stringify({ periode: parsed }),
-      }).catch(e => console.warn("Failed saving to server", e));
     }
-  };
-
-  const handleResetPeriode = () => {
-    const defaultPeriode = 12;
-    setPeriodeInput(String(defaultPeriode));
-    onPeriodeChange?.(defaultPeriode);
-    localStorage.setItem("periode", String(defaultPeriode));
+    localStorage.setItem(
+      "notifications",
+      String(notifications),
+    );
+    localStorage.setItem("autoBackup", String(autoBackup));
     setHasChanges(false);
   };
 
-  const handleSaveResidu = () => {
-    const parsed = Number(residuInput || 0);
-    if (!isNaN(parsed) && parsed >= 0) {
-      onResiduChange?.(parsed);
-      localStorage.setItem("residu", String(parsed));
-      setHasChanges(false);
-      toast.success("Residu updated!");
-      addNotification({
-        type: "success",
-        title: "Settings Updated",
-        message: `Residu changed to ${new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(parsed)}`,
-      });
-
-      // Save to backend for per-user persistence
-      apiFetch("/api/user_settings", {
-        method: "POST",
-        body: JSON.stringify({ residu: parsed }),
-      }).catch(e => console.warn("Failed saving to server", e));
-    }
+  const handleLanguageChange = (lang: string) => {
+    setLocalLanguage(lang);
+    setGlobalLanguage(lang as "id" | "en"); // Apply immediately for instant preview
+    setHasChanges(true);
   };
 
-  const handleResetResidu = () => {
-    const defaultResidu = 0;
-    setResiduInput(String(defaultResidu));
-    onResiduChange?.(defaultResidu);
-    localStorage.setItem("residu", String(defaultResidu));
-    setHasChanges(false);
-  };
-
-  // Save all settings at once (for "Save All & Close" button)
-  const handleSaveAll = async () => {
-    const updates: any = {};
-    let hasUpdates = false;
-
-    // Check and save project name
-    if (projectNameInput.trim() && projectNameInput !== projectName) {
+  const handleSaveAll = () => {
+    // Save project name (if changed)
+    if (projectNameInput.trim()) {
       onProjectNameChange?.(projectNameInput.trim());
-      localStorage.setItem("projectName", projectNameInput.trim());
-      updates.projectName = projectNameInput.trim();
-      hasUpdates = true;
+      localStorage.setItem(
+        "projectName",
+        projectNameInput.trim(),
+      );
     }
 
-    // Check and save modal
-    const parsedModal = Number(modalInput || 0);
-    if (!isNaN(parsedModal) && parsedModal > 0 && parsedModal !== initialModal) {
-      onModalChange(parsedModal);
-      localStorage.setItem("initialModal", String(parsedModal));
-      updates.initialModal = parsedModal;
-      hasUpdates = true;
+    // Save modal first (if changed)
+    const parsed = Number(modalInput || 0);
+    if (!isNaN(parsed) && parsed > 0) {
+      onModalChange(parsed);
+      localStorage.setItem("initialModal", String(parsed));
     }
 
-    // Check and save ROI target
-    const parsedRoi = Number(roiInput || 0);
-    if (!isNaN(parsedRoi) && parsedRoi > 0 && parsedRoi !== roiTarget) {
-      onRoiTargetChange?.(parsedRoi);
-      localStorage.setItem("roiTarget", String(parsedRoi));
-      updates.roiTarget = parsedRoi;
-      hasUpdates = true;
+    // Save ROI target (if changed)
+    const roiParsed = Number(roiInput || 0);
+    if (!isNaN(roiParsed) && roiParsed > 0) {
+      onRoiTargetChange?.(roiParsed);
+      localStorage.setItem("roiTarget", String(roiParsed));
     }
 
-    // Check and save periode
-    const parsedPeriode = Number(periodeInput || 0);
-    if (!isNaN(parsedPeriode) && parsedPeriode > 0 && parsedPeriode !== periode) {
-      onPeriodeChange?.(parsedPeriode);
-      localStorage.setItem("periode", String(parsedPeriode));
-      updates.periode = parsedPeriode;
-      hasUpdates = true;
+    // Save periode (if changed)
+    const periodeParsed = Number(periodeInput || 0);
+    if (!isNaN(periodeParsed) && periodeParsed > 0) {
+      onPeriodeChange?.(periodeParsed);
+      localStorage.setItem("periode", String(periodeParsed));
     }
 
-    // Check and save residu
-    const parsedResidu = Number(residuInput || 0);
-    if (!isNaN(parsedResidu) && parsedResidu >= 0 && parsedResidu !== residu) {
-      onResiduChange?.(parsedResidu);
-      localStorage.setItem("residu", String(parsedResidu));
-      updates.residu = parsedResidu;
-      hasUpdates = true;
+    // Save residu (if changed)
+    const residuParsed = Number(residuInput || 0);
+    if (!isNaN(residuParsed) && residuParsed >= 0) {
+      onResiduChange?.(residuParsed);
+      localStorage.setItem("residu", String(residuParsed));
     }
 
-    // Save all to backend in one request if there are updates
-    if (hasUpdates) {
-      try {
-        await apiFetch("/api/user_settings", {
-          method: "POST",
-          body: JSON.stringify(updates),
-        });
-        toast.success("All settings saved!");
-        addNotification({
-          type: "success",
-          title: "Settings Saved",
-          message: "All your settings have been saved successfully",
-        });
-      } catch (e) {
-        console.warn("Failed saving all settings to server", e);
-        toast.warning("Settings saved locally, but server sync failed");
-      }
-    }
+    // Save other settings
+    handleSaveSettings();
 
-    setHasChanges(false);
+    toast.success("All settings saved!");
+    addNotification({
+      type: "success",
+      title: "Settings Saved",
+      message: "All your settings have been saved successfully",
+    });
+
+    // Close sheet
     onOpenChange(false);
   };
 
-  // replace existing handleLogout
   const handleLogout = () => {
-    if (!window.confirm("Are you sure you want to log out?"))
-      return;
-
-    // Use the logout function from AuthContext - same as in App-lokal-FINAL.tsx header
-    authLogout();
-
-    // Notify parent (optional, authLogout already handles everything)
-    onLogout?.();
-  };
-
-  // replace existing handleEraseData
-  const handleEraseData = async () => {
-    try {
-      // call backend to erase per-user files
-      const res = await apiFetch("/api/user/erase", {
-        method: "POST",
+    if (window.confirm("Are you sure you want to log out?")) {
+      onLogout?.();
+      toast.success("Logged out successfully");
+      addNotification({
+        type: "info",
+        title: "Logged Out",
+        message: "You have been logged out successfully",
       });
-
-      if (res.ok) {
-        // clear client storage except theme & language
-        const themeMode = localStorage.getItem("themeMode");
-        const language = localStorage.getItem("language");
-        localStorage.clear();
-        if (themeMode)
-          localStorage.setItem("themeMode", themeMode);
-        if (language)
-          localStorage.setItem("language", language);
-
-        toast.success(
-          "All data erased from server and local storage.",
-        );
-        addNotification({
-          type: "warning",
-          title: "Data Erased",
-          message:
-            "All transactions and settings have been erased.",
-        });
-
-        // reload app to reset state
-        setTimeout(() => window.location.reload(), 900);
-      } else {
-        const j = await res.json().catch(() => ({}));
-        toast.error(
-          `Failed to erase data: ${j.error || res.statusText || res.status}`,
-        );
-      }
-    } catch (e) {
-      console.error("Erase data failed", e);
-      toast.error("Failed to contact server to erase data.");
     }
   };
 
-  // replace existing handleDeleteAccount
-  const handleDeleteAccount = async () => {
-    try {
-      const res = await apiFetch("/api/user/delete", {
-        method: "POST",
-      });
+  const handleEraseData = () => {
+    // Clear all localStorage data except theme and language
+    const themeMode = localStorage.getItem("themeMode");
+    const language = localStorage.getItem("language");
+    localStorage.clear();
+    if (themeMode)
+      localStorage.setItem("themeMode", themeMode);
+    if (language) localStorage.setItem("language", language);
 
-      if (res.ok) {
-        toast.success(
-          "Account deleted. You will be signed out.",
-        );
-        addNotification({
-          type: "error",
-          title: "Account Deleted",
-          message:
-            "Your account and server data were permanently removed.",
-        });
+    toast.success("All data has been erased");
+    addNotification({
+      type: "warning",
+      title: "Data Erased",
+      message:
+        "All your transactions and data have been permanently deleted",
+    });
 
-        // clear client-side storage and call onLogout
-        localStorage.clear();
-        onLogout?.();
+    // Reload page to reset state
+    setTimeout(() => window.location.reload(), 1000);
+  };
 
-        // close sheet, then reload to show logged-out state
-        onOpenChange(false);
-        setTimeout(() => (window.location.href = "/"), 800);
-      } else {
-        const j = await res.json().catch(() => ({}));
-        toast.error(
-          `Failed to delete account: ${j.error || res.statusText || res.status}`,
-        );
-      }
-    } catch (e) {
-      console.error("Delete account failed", e);
-      toast.error(
-        "Failed to contact server to delete account.",
-      );
-    }
+  const handleDeleteAccount = () => {
+    toast.error("Account deletion requested");
+    addNotification({
+      type: "error",
+      title: "Account Deletion",
+      message:
+        "Your account deletion request has been submitted",
+    });
+
+    // In real app, call API to delete account
+    setTimeout(() => {
+      onLogout?.();
+    }, 2000);
   };
 
   if (!open) return null;
-
-  // prefer authenticated values if available, otherwise fall back to props
-  const displayName = authName || userName || "User Name";
-  const displayEmail =
-    authEmail || userEmail || "user@example.com";
 
   return (
     <>
@@ -879,18 +707,25 @@ export function SettingsSheet({
                           setHasChanges(true);
                         }}
                         className="flex-1"
-                        placeholder="M4 ROI"
+                        placeholder="M4 Tracking"
                       />
                       <Button
                         onClick={handleSaveProjectName}
-                        disabled={!hasChanges || !projectNameInput.trim()}
+                        disabled={
+                          !hasChanges ||
+                          !projectNameInput.trim()
+                        }
                         style={{
-                          background: hasChanges && projectNameInput.trim()
-                            ? "linear-gradient(to right, #3b82f6, #9333ea)"
-                            : "#e5e7eb",
-                          color: hasChanges && projectNameInput.trim()
-                            ? "white"
-                            : "#9ca3af",
+                          background:
+                            hasChanges &&
+                            projectNameInput.trim()
+                              ? "linear-gradient(to right, #3b82f6, #9333ea)"
+                              : "#e5e7eb",
+                          color:
+                            hasChanges &&
+                            projectNameInput.trim()
+                              ? "white"
+                              : "#9ca3af",
                           padding: "0.5rem 1rem",
                           minWidth: "80px",
                           border: "none",
@@ -911,7 +746,8 @@ export function SettingsSheet({
                       </Button>
                     </div>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      This name will appear in the header and PDF exports
+                      This name will appear in the header and
+                      PDF exports
                     </p>
                   </div>
 
@@ -973,7 +809,7 @@ export function SettingsSheet({
                         }}
                       >
                         <Save className="w-4 h-4 mr-2" />
-                        Save
+                        {t.settings.save}
                       </Button>
                       <Button
                         variant="outline"
@@ -992,19 +828,58 @@ export function SettingsSheet({
                     </p>
                   </div>
 
-                  {/* DEPRECATED: Periode and Residu moved to Capital Items dialog */}
-                  {/* These fields are now managed per-item in Capital Items */}
-                  
-                  {/* Nilai Depresiasi (Calculated) - Summary from all capital items */}
+                  {/* Periode (Depreciation Period) */}
                   <div>
                     <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">
-                      Total Depresiasi/Bulan
+                      Periode (Bulan)
+                    </label>
+                    <Input
+                      type="number"
+                      value={periodeInput}
+                      onChange={(e) => {
+                        setPeriodeInput(e.target.value);
+                        setHasChanges(true);
+                      }}
+                      className="w-full"
+                      placeholder="12"
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Periode depresiasi dalam bulan (e.g. 12 bulan)
+                    </p>
+                  </div>
+
+                  {/* Residu (Residual Value) */}
+                  <div>
+                    <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">
+                      Residu
+                    </label>
+                    <Input
+                      type="number"
+                      value={residuInput}
+                      onChange={(e) => {
+                        setResiduInput(e.target.value);
+                        setHasChanges(true);
+                      }}
+                      className="w-full"
+                      placeholder="5000000"
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      {t.settings.current}: Rp{" "}
+                      {Number(residuInput || 0).toLocaleString("id-ID")}
+                    </p>
+                  </div>
+
+                  {/* Nilai Depresiasi (Calculated) */}
+                  <div>
+                    <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">
+                      Nilai Depresiasi
                     </label>
                     <div className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900/50 text-gray-900 dark:text-gray-300">
                       Rp {depreciationValue.toLocaleString("id-ID", { maximumFractionDigits: 0 })}
                     </div>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      Total dari semua aset yang di-depreciate. Kelola per-item di Capital Items.
+                      Otomatis dihitung: (Initial Modal - Residu) / Periode = Rp{" "}
+                      {depreciationValue.toLocaleString("id-ID", { maximumFractionDigits: 0 })}/bulan
                     </p>
                   </div>
 
@@ -1015,10 +890,14 @@ export function SettingsSheet({
                         {t.settings.currency}
                       </label>
                       {loadingRates && (
-                        <span className="text-xs text-blue-500">Updating rates...</span>
+                        <span className="text-xs text-blue-500">
+                          Updating rates...
+                        </span>
                       )}
                       {ratesError && (
-                        <span className="text-xs text-yellow-500">Using cached rates</span>
+                        <span className="text-xs text-yellow-500">
+                          Using cached rates
+                        </span>
                       )}
                     </div>
                     <select
@@ -1033,17 +912,41 @@ export function SettingsSheet({
                         {t.currencyOptions.idr} (Rp)
                       </option>
                       <option value="USD">
-                        {t.currencyOptions.usd} ($ - 1 USD = Rp {globalRates.USD.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                        {t.currencyOptions.usd} ($ - 1 USD = Rp{" "}
+                        {globalRates.USD.toLocaleString(
+                          "id-ID",
+                          {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          },
+                        )}
+                        )
                       </option>
                       <option value="EUR">
-                        {t.currencyOptions.eur} (€ - 1 EUR = Rp {globalRates.EUR.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                        {t.currencyOptions.eur} (€ - 1 EUR = Rp{" "}
+                        {globalRates.EUR.toLocaleString(
+                          "id-ID",
+                          {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          },
+                        )}
+                        )
                       </option>
                       <option value="SGD">
-                        {t.currencyOptions.sgd} (S$ - 1 SGD = Rp {globalRates.SGD.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                        {t.currencyOptions.sgd} (S$ - 1 SGD = Rp{" "}
+                        {globalRates.SGD.toLocaleString(
+                          "id-ID",
+                          {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          },
+                        )}
+                        )
                       </option>
                     </select>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      💱 Exchange rates fetched in real-time from <a href="https://exchangerate-api.com" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">ExchangeRate-API</a>. All amounts in the dashboard will be converted to {globalCurrency}.
+                      Exchange rates are updated when you open settings
                     </p>
                   </div>
                 </div>
@@ -1232,56 +1135,40 @@ export function SettingsSheet({
                 <div className="space-y-4">
                   {/* User Avatar and Name */}
                   <div className="flex items-center gap-4">
-                    {authPicture ? (
-                      <img
-                        src={authPicture}
-                        alt="avatar"
-                        className="w-16 h-16 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div
-                        className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl"
-                        style={{
-                          background:
-                            "linear-gradient(to bottom right, #3b82f6, #9333ea)",
-                        }}
-                      >
-                        {displayName
-                          ? displayName.charAt(0).toUpperCase()
-                          : "U"}
-                      </div>
-                    )}
+                    <div
+                      className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl"
+                      style={{
+                        background:
+                          "linear-gradient(to bottom right, #3b82f6, #9333ea)",
+                      }}
+                    >
+                      {userName
+                        ? userName.charAt(0).toUpperCase()
+                        : "U"}
+                    </div>
                     <div className="flex-1">
                       <p className="text-gray-900 dark:text-white font-medium">
-                        {loadingAuth ? "Loading..." : displayName}
+                        {userName || "User Name"}
                       </p>
                       <div className="flex items-center gap-2">
                         <p className="text-sm text-gray-500 dark:text-gray-400">
-                          {loadingAuth
-                            ? ""
-                            : showEmail
-                              ? displayEmail
-                              : "••••••••••••••"}
+                          {showEmail
+                            ? userEmail || "user@example.com"
+                            : "••••••••••••••"}
                         </p>
-                        {!loadingAuth && (
-                          <button
-                            onClick={() =>
-                              setShowEmail(!showEmail)
-                            }
-                            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                            title={
-                              showEmail
-                                ? "Hide email"
-                                : "Show email"
-                            }
-                          >
-                            {showEmail ? (
-                              <EyeOff className="w-4 h-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" />
-                            ) : (
-                              <Eye className="w-4 h-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" />
-                            )}
-                          </button>
-                        )}
+                        <button
+                          onClick={() => setShowEmail(!showEmail)}
+                          className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          title={
+                            showEmail ? "Hide email" : "Show email"
+                          }
+                        >
+                          {showEmail ? (
+                            <EyeOff className="w-4 h-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" />
+                          ) : (
+                            <Eye className="w-4 h-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" />
+                          )}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1399,74 +1286,38 @@ export function SettingsSheet({
                   </div>
 
                   {/* Auto Backup */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Database className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                        <div>
-                          <p className="text-sm text-gray-900 dark:text-white">
-                            {t.settings.autoBackup}
-                          </p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                            Automatic weekly backup
-                          </p>
-                        </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Database className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-900 dark:text-white">
+                          {t.settings.autoBackup}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {t.settings.autoBackupDesc}
+                        </p>
                       </div>
-                      <button
-                        onClick={() => {
-                          setAutoBackup(!autoBackup);
-                          setHasChanges(true);
-                        }}
-                        className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                        style={{
-                          backgroundColor: autoBackup
-                            ? "#3b82f6"
-                            : "#e5e7eb",
-                        }}
-                      >
-                        <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                            autoBackup
-                              ? "translate-x-6"
-                              : "translate-x-1"
-                          }`}
-                        />
-                      </button>
                     </div>
-                    
-                    {/* Last Backup Info & Manual Backup Button */}
-                    <div className="ml-8 flex items-center justify-between gap-2">
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {(() => {
-                          const lastBackup = getLastBackupTime();
-                          if (!lastBackup) return "No backup yet";
-                          const date = new Date(lastBackup);
-                          const now = new Date();
-                          const diffMs = now.getTime() - date.getTime();
-                          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-                          
-                          if (diffDays === 0) return "Last backup: Today";
-                          if (diffDays === 1) return "Last backup: Yesterday";
-                          if (diffDays < 7) return `Last backup: ${diffDays} days ago`;
-                          return `Last backup: ${date.toLocaleDateString()}`;
-                        })()}
-                      </p>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={async () => {
-                          const success = await performBackup();
-                          if (success) {
-                            toast.success("Backup created successfully!");
-                          } else {
-                            toast.error("Failed to create backup");
-                          }
-                        }}
-                        className="h-7 text-xs"
-                      >
-                        Backup Now
-                      </Button>
-                    </div>
+                    <button
+                      onClick={() => {
+                        setAutoBackup(!autoBackup);
+                        setHasChanges(true);
+                      }}
+                      className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                      style={{
+                        backgroundColor: autoBackup
+                          ? "#3b82f6"
+                          : "#e5e7eb",
+                      }}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          autoBackup
+                            ? "translate-x-6"
+                            : "translate-x-1"
+                        }`}
+                      />
+                    </button>
                   </div>
                 </div>
               </Card>
@@ -1555,7 +1406,7 @@ export function SettingsSheet({
                     BUKABOX M4 ROI Tracker © 2025
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Last updated: December 15, 2025
+                    Last updated: December 11, 2025
                   </p>
                 </div>
               </Card>
@@ -1569,6 +1420,8 @@ export function SettingsSheet({
               </Card>
             </>
           )}
+
+
         </div>
 
         {/* Footer Actions - Sticky Bottom */}
@@ -1610,7 +1463,7 @@ export function SettingsSheet({
         onOpenChange={setShowEraseDialog}
         onConfirm={handleEraseData}
         title="Erase All Data"
-        description="This will permanently delete all your transactions, products, and settings from the server and local storage. Your theme and language preferences will be preserved. This action cannot be undone!"
+        description="This will permanently delete all your transactions, products, and settings. Your theme and language preferences will be preserved. This action cannot be undone!"
         variant="warning"
         icon={<Trash2 className="w-6 h-6 text-orange-500 dark:text-orange-400" />}
         confirmText="Erase All Data"
@@ -1623,7 +1476,7 @@ export function SettingsSheet({
         onOpenChange={setShowDeleteDialog}
         onConfirm={handleDeleteAccount}
         title="Delete Account"
-        description="This will permanently delete your account and ALL associated data from the server including transactions, products, and settings. You will be logged out and this action CANNOT be undone. Are you absolutely sure?"
+        description="This will permanently delete your account and all associated data including transactions, products, and settings. You will be logged out and this action CANNOT be undone. Are you absolutely sure?"
         variant="danger"
         icon={<AlertTriangle className="w-6 h-6 text-red-500 dark:text-red-400" />}
         confirmText="Delete Account"

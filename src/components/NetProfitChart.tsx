@@ -1,5 +1,6 @@
 import { Card } from './ui/card';
 import { TrendingUp } from 'lucide-react';
+import { useCurrency } from '../contexts/CurrencyContext';
 import {
   ResponsiveContainer,
   LineChart,
@@ -20,14 +21,16 @@ interface NetProfitChartProps {
 
 export function NetProfitChart({ netProfitData, monthlyLabels, currentYear }: NetProfitChartProps) {
   
+  const { formatCurrency, convertFromIDR } = useCurrency();
+  
   // Kombinasikan label bulan dan data net profit
   const chartData = monthlyLabels.map((label, index) => ({
     month: label,
-    'Net Profit (Income - Expense - Investment)': netProfitData[index] || 0,
+    'Net Profit (Income - Expense)': netProfitData[index] || 0,
   }));
 
   // Cek apakah ada data yang valid untuk ditampilkan
-  const hasData = chartData.some(d => d['Net Profit (Income - Expense - Investment)'] !== 0);
+  const hasData = chartData.some(d => d['Net Profit (Income - Expense)'] !== 0);
 
   if (!hasData) {
     return (
@@ -44,7 +47,7 @@ export function NetProfitChart({ netProfitData, monthlyLabels, currentYear }: Ne
           <TrendingUp className="w-5 h-5 text-gray-600" />
           <h3 className="text-gray-900">Net Profit Trend</h3>
         </div>
-        <p className="text-gray-500 text-sm">Monthly Net Profit (Income - Expense - Investment) — {currentYear}</p>
+        <p className="text-gray-500 text-sm">Monthly Net Profit (Income - Expense) — {currentYear}</p>
       </div>
 
       <ResponsiveContainer width="100%" height={320}>
@@ -70,14 +73,14 @@ export function NetProfitChart({ netProfitData, monthlyLabels, currentYear }: Ne
             }} 
           />
           <Tooltip
-            formatter={(value: number, name: string) => [`Rp ${Number(value).toLocaleString('id-ID')}`, String(name)]}
+            formatter={(value: number, name: string) => [formatCurrency(Number(value)), String(name)]}
             contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12 }}
           />
           <Legend />
 
           <Line
             type="monotone"
-            dataKey="Net Profit (Income - Expense - Investment)"
+            dataKey="Net Profit (Income - Expense)"
             stroke="#06b6d4" // Warna Cyan untuk Net Profit
             strokeWidth={2}
             dot={false}

@@ -2,6 +2,8 @@
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { Card } from "./ui/card";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./ui/accordion";
+import { useCurrency } from '../contexts/CurrencyContext';
+import { apiFetch } from '../lib/api';
 
 /**
  * InvestmentCrypto.tsx (patched)
@@ -15,10 +17,6 @@ import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./
  */
 
 // small helpers
-function formatRp(n: number) {
-  if (n == null || !Number.isFinite(n)) return "Rp 0";
-  return "Rp " + new Intl.NumberFormat("id-ID").format(Math.round(n));
-}
 function fmtNumber(n: number, decimals = 8) {
   if (n == null || !Number.isFinite(n)) return "0";
   const s = n.toFixed(decimals);
@@ -44,6 +42,7 @@ type Holding = {
 };
 
 export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
+  const { formatCurrency } = useCurrency();
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [btcPriceIdr, setBtcPriceIdr] = useState<number>(0);
   const [loading, setLoading] = useState(true);
@@ -55,7 +54,7 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
   // Load holdings from backend
   async function loadHoldings() {
     try {
-      const res = await fetch("/api/crypto_holdings");
+      const res = await apiFetch("/api/crypto_holdings");
       if (!res.ok) throw new Error(`holdings fetch failed ${res.status}`);
       
       // Check if response is JSON
@@ -77,7 +76,7 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
 
   async function loadTransactions() {
     try {
-      const res = await fetch("/api/transactions");
+      const res = await apiFetch("/api/transactions");
       if (!res.ok) throw new Error(`transactions fetch failed ${res.status}`);
       
       // Check if response is JSON
@@ -113,7 +112,7 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
   // Try internal price first, fallback to CoinGecko simple price if needed
   async function fetchInternalPrice(): Promise<number | null> {
     try {
-      const res = await fetch("/api/crypto_prices?vs_currency=idr&symbols=btc");
+      const res = await apiFetch("/api/crypto_prices?vs_currency=idr&symbols=btc");
       if (!res.ok) throw new Error("internal price fetch failed");
       
       // Check if response is JSON
@@ -386,7 +385,7 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
       <div className="mb-4 border rounded-lg p-4 bg-gray-50">
         <div className="flex items-center justify-between">
           <div className="text-sm text-gray-600">Initial Investment</div>
-          <div className="font-semibold">{formatRp(totalInvestedIdr)}</div>
+          <div className="font-semibold">{formatCurrency(totalInvestedIdr)}</div>
         </div>
       </div>
 
@@ -414,7 +413,7 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
 
                       <div className="text-right">
                         <div className="font-semibold">
-                          { formatRp( Number(it.invested_idr ?? ((it.price_idr ?? 0) * (it.amount ?? 0))) ) }
+                          { formatCurrency( Number(it.invested_idr ?? ((it.price_idr ?? 0) * (it.amount ?? 0))) ) }
                         </div>
 
                         <div className="text-sm text-gray-500">
@@ -434,7 +433,7 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
 
                         <div>
                           <div className="text-sm text-gray-500 mb-1">Price Entry (IDR)</div>
-                          <div className="text-gray-900">{formatRp(it.price_idr || 0)}</div>
+                          <div className="text-gray-900">{formatCurrency(it.price_idr || 0)}</div>
                         </div>
 
                         <div>
@@ -444,7 +443,7 @@ export function InvestmentCrypto({ pageSize = 3 }: { pageSize?: number }) {
 
                         <div>
                           <div className="text-sm text-gray-500 mb-1">Invested (IDR)</div>
-                          <div className="text-gray-900">{formatRp(it.invested_idr || 0)}</div>
+                          <div className="text-gray-900">{formatCurrency(it.invested_idr || 0)}</div>
                         </div>
                       </div>
 
